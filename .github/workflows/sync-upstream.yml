@@ -40,8 +40,13 @@ jobs:
 
           if git merge-base --is-ancestor "upstream/$UPSTREAM_BRANCH" HEAD; then
             echo "Upstream has no new commits."
-            echo "updated=false" >> "$GITHUB_OUTPUT"
             echo "conflict=false" >> "$GITHUB_OUTPUT"
+            # 手动触发(workflow_dispatch)时也执行构建, 便于随时拿到最新 APK
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              echo "updated=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "updated=false" >> "$GITHUB_OUTPUT"
+            fi
             exit 0
           fi
 
