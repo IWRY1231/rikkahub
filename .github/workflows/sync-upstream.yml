@@ -170,15 +170,25 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: web-ui
 
-      - name: Build debug APK
+      - name: Configure release signing (local.properties)
         if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
-        run: ./gradlew --no-daemon assembleDebug
+        run: |
+          cat > local.properties <<EOF
+          storeFile=${{ github.workspace }}/app/keystore/release.keystore
+          storePassword=Rikka#Local#2026
+          keyAlias=rikkahub
+          keyPassword=Rikka#Local#2026
+          EOF
+
+      - name: Build release APK
+        if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
+        run: ./gradlew --no-daemon assembleRelease
 
       - name: Collect APK
         if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
         run: |
           mkdir -p dist
-          find app/build/outputs/apk -name "*-debug.apk" -exec cp -v {} dist/ \;
+          find app/build/outputs/apk -name "*-release*.apk" -exec cp -v {} dist/ \;
           ls -la dist
 
       - name: Upload artifact
