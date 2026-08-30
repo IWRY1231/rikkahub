@@ -66,6 +66,15 @@
     android:theme="@style/Theme.Rikkahub"
     android:usesCleartextTraffic="true"
     tools:targetApi="33">
+    <!-- 自构建 APK 未通过 Play 签名认证, ADID 读取会被 GMS 服务端拒绝并抛
+         SecurityException(GoogleCertificatesRslt) 杀死 GoogleApiHandler 线程导致闪退;
+         关闭广告 ID 与 SSAID 采集, 在占位 google-services.json 下保持运行稳定 -->
+    <meta-data
+      android:name="google_analytics_adid_collection_enabled"
+      android:value="false" />
+    <meta-data
+      android:name="google_analytics_ssaid_collection_enabled"
+      android:value="false" />
     <activity
       android:name=".ui.activity.SafeModeActivity"
       android:exported="false"
