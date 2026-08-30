@@ -139,6 +139,55 @@ fun Context.getActivity(): Activity? {
     return null
 }
 
+/**
+ * Whether the app has been granted "All files access"
+ * (android.permission.MANAGE_EXTERNAL_STORAGE), which lets the workspace
+ * Linux environment read and write all files on the phone via /sdcard.
+ */
+fun Context.hasAllFilesAccessPermission(): Boolean {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        Environment.isExternalStorageManager()
+    } else {
+        ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+}
+
+/**
+ * Open the system "All files access" settings page (Android 11+), or request
+ * the legacy external storage runtime permission on older versions.
+ */
+fun Context.openAllFilesAccessSettings() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        runCatching {
+            startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                data = Uri.parse("package:$packageName")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+        }.onFailure {
+            Log.e(TAG, "openAllFilesAccessSettings failed", it)
+            runCatching {
+                startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+            }.onFailure {
+                Log.e(TAG, "openAllFilesAccessSettings(global) failed", it)
+            }
+        }
+    } else {
+        getComponentActivity()?.let { activity ->
+            ActivityCompat.requestPermissions(
+                activity,
+                arrayOf(
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                ),
+                2
+            )
+        }
+    }
+}
+
 fun Context.getComponentActivity(): ComponentActivity? {
     var context = this
     while (context is ContextWrapper) {
