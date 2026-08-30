@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.ui.pages.extensions.workspace
 
 import android.content.Intent
+import android.util.Log
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import androidx.activity.compose.BackHandler
@@ -25,6 +26,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -48,11 +50,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
@@ -78,6 +83,8 @@ import me.rerere.rikkahub.ui.components.ui.RikkaConfirmDialog
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.utils.fileSizeToString
+import me.rerere.rikkahub.utils.hasAllFilesAccessPermission
+import me.rerere.rikkahub.utils.openAllFilesAccessSettings
 import me.rerere.rikkahub.utils.plus
 import me.rerere.workspace.RootfsInstallProgress
 import me.rerere.workspace.RootfsInstallStage
@@ -189,6 +196,8 @@ fun WorkspaceDetailPage(id: String) {
                     installProgress = installProgress,
                     onInstallRootfs = { showInstallDialog = true },
                     onToolApprovalChange = vm::setToolApproval,
+                    onAndroidLocalAccessChange = vm::setAndroidLocalAccess,
+                    onLocalDirectoryChange = vm::setLocalDirectory,
                 )
 
                 1 -> WorkspaceFilesPage(
@@ -312,7 +321,22 @@ private fun WorkspaceBasicPage(
     installProgress: RootfsInstallProgress?,
     onInstallRootfs: () -> Unit,
     onToolApprovalChange: (String, Boolean) -> Unit,
+    onAndroidLocalAccessChange: (Boolean) -> Unit,
+    onLocalDirectoryChange: (String?) -> Unit,
 ) {
+    val context = LocalContext.current
+    // 手机全部文件访问权限状态, 从系统设置返回后(ON_RESUME)自动刷新
+    var allFilesGranted by remember { mutableStateOf(context.hasAllFilesAccessPermission()) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                allFilesGranted = context.hasAllFilesAccessPermission()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val shellStatus = workspace?.shellStatus
     val installing = installProgress != null || shellStatus == WorkspaceShellStatus.INSTALLING.name
     val rootfsReady = shellStatus == WorkspaceShellStatus.READY.name
@@ -344,6 +368,123 @@ private fun WorkspaceBasicPage(
                     )
                     WorkspaceInfoRow(stringResource(R.string.workspace_detail_name), workspace?.name ?: stringResource(R.string.workspace_detail_loading))
                     WorkspaceInfoRow(stringResource(R.string.workspace_detail_shell_status), workspace?.shellStatus?.toShellStatusLabel() ?: "-")
+
+                    // Android 本地读写工作区与本地互通（默认开启）
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.workspace_detail_android_local_access),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                text = stringResource(R.string.workspace_detail_android_local_access_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = workspace?.androidLocalAccess ?: true,
+                            onCheckedChange = onAndroidLocalAccessChange,
+                        )
+                    }
+
+                    // 手机全部文件访问权限引导: 授权后 Linux 工作区 AI 可通过 /sdcard 读写手机全部文件
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.workspace_detail_all_files_access),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                text = stringResource(R.string.workspace_detail_all_files_access_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                context.openAllFilesAccessSettings()
+                            },
+                        ) {
+                            Text(
+                                text = stringResource(
+                                    if (allFilesGranted) {
+                                        R.string.workspace_detail_all_files_access_granted
+                                    } else {
+                                        R.string.workspace_detail_all_files_access_grant
+                                    }
+                                )
+                            )
+                        }
+                    }
+                    if (!allFilesGranted) {
+                        Text(
+                            text = stringResource(R.string.workspace_detail_all_files_access_restart),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+
+                    // 本地目录互通: SAF 目录授权, 挂载为 /local, 不依赖「所有文件访问」权限
+                    HorizontalDivider()
+                    val localDirPicker = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.OpenDocumentTree()
+                    ) { uri ->
+                        if (uri != null) {
+                            val resolver = context.contentResolver
+                            try {
+                                resolver.takePersistableUriPermission(
+                                    uri,
+                                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                                )
+                            } catch (e: SecurityException) {
+                                Log.w("WorkspaceDetail", "takePersistableUriPermission failed: $uri", e)
+                            }
+                            onLocalDirectoryChange(uri.toString())
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.workspace_detail_local_directory),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                text = if (workspace?.localDirectoryUri.isNullOrBlank()) {
+                                    stringResource(R.string.workspace_detail_local_directory_desc)
+                                } else {
+                                    stringResource(R.string.workspace_detail_local_directory_set)
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (workspace?.localDirectoryUri.isNullOrBlank()) {
+                            TextButton(onClick = { localDirPicker.launch(null) }) {
+                                Text(stringResource(R.string.workspace_detail_local_directory_pick))
+                            }
+                        } else {
+                            TextButton(onClick = { onLocalDirectoryChange(null) }) {
+                                Text(stringResource(R.string.workspace_detail_local_directory_clear))
+                            }
+                        }
+                    }
+                    if (!workspace?.localDirectoryUri.isNullOrBlank()) {
+                        Text(
+                            text = stringResource(R.string.workspace_detail_local_directory_note),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             }
         }

@@ -15,22 +15,27 @@ import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
-import me.rerere.rikkahub.data.files.FileFolders
+import me.rerere.rikkahub.data.files.WorkspaceMounts
+import me.rerere.rikkahub.data.repository.LocalDirectorySync
 import me.rerere.workspace.RootfsPatchOptions
 import me.rerere.workspace.RootfsPatcher
+import me.rerere.workspace.WorkspaceBindMount
+import me.rerere.workspace.WorkspaceManager
+import me.rerere.workspace.buildBindMountArgs
 import java.io.File
 
 internal fun createWorkspaceTerminalSession(
     context: Context,
     root: String,
     client: TerminalSessionClient,
+    androidLocalAccess: Boolean = true,
+    localDirectoryUri: String? = null,
 ): TerminalSession {
     val appContext = context.applicationContext
     val workspaceDir = File(File(appContext.filesDir, "workspaces"), root)
     val filesDir = File(workspaceDir, "files")
     val linuxDir = File(workspaceDir, "linux")
     val tempDir = File(workspaceDir, "tmp")
-    val skillsDir = File(appContext.filesDir, FileFolders.SKILLS).apply { mkdirs() }
     val nativeLibraryDir = File(appContext.applicationInfo.nativeLibraryDir)
     val proot = File(nativeLibraryDir, "libproot_exec.so")
     val loader = File(nativeLibraryDir, "libproot_loader.so")
@@ -45,9 +50,16 @@ internal fun createWorkspaceTerminalSession(
         WORKSPACE_DIR,
         "-b",
         "${filesDir.absolutePath}:$WORKSPACE_DIR",
-        "-b",
-        "${skillsDir.absolutePath}:$SKILLS_DIR",
     )
+
+    // 与 AI 命令执行共用同一份 Android 本地挂载表, 保证 /skills、/tool_outputs、/upload、
+    // /sdcard 与 /local 在终端与工具中行为一致; 关闭本地互通时不挂载任何 Android 本地目录
+    if (androidLocalAccess) {
+        args += buildBindMountArgs(WorkspaceMounts.androidLocalMounts(appContext))
+        localDirMirror(appContext, root, localDirectoryUri)?.let { mirror ->
+            args += buildBindMountArgs(listOf(WorkspaceBindMount(mirror, WorkspaceManager.LOCAL_DIR)))
+        }
+    }
     listOf("/dev", "/proc", "/sys").forEach { path ->
         if (File(path).exists()) {
             args += "-b"
@@ -85,17 +97,38 @@ internal fun createWorkspaceTerminalSession(
     }
 }
 
-internal fun prepareWorkspaceTerminalSession(context: Context, root: String) {
+/** 终端会话挂载 /local 前拉取本地目录到镜像 */
+internal suspend fun prepareWorkspaceTerminalSession(
+    context: Context,
+    root: String,
+    androidLocalAccess: Boolean = true,
+    localDirectoryUri: String? = null,
+) {
     val appContext = context.applicationContext
     val workspaceDir = File(File(appContext.filesDir, "workspaces"), root)
     val linuxDir = File(workspaceDir, "linux")
     File(workspaceDir, "files").mkdirs()
     File(workspaceDir, "tmp").mkdirs()
-    File(appContext.filesDir, FileFolders.SKILLS).mkdirs()
+    WorkspaceMounts.androidLocalMounts(appContext)
     RootfsPatcher().patch(
         linuxDir,
         RootfsPatchOptions(nameservers = appContext.activeDnsServers())
     )
+    val mirror = localDirMirror(appContext, root, localDirectoryUri)
+    if (mirror != null && androidLocalAccess) {
+        mirror.mkdirs()
+        val treeUri = runCatching { localDirectoryUri!!.toUri() }.getOrNull()
+        if (treeUri != null && LocalDirectorySync.hasPersistedPermission(appContext, treeUri)) {
+            runCatching { LocalDirectorySync.syncToMirror(appContext, treeUri, mirror) }
+                .onFailure { Log.w(TAG, "syncToMirror failed", it) }
+        }
+    }
+}
+
+/** /local 镜像目录（内容来自 SAF 授权的本地目录，命令执行后同步回手机） */
+internal fun localDirMirror(appContext: Context, root: String, localDirectoryUri: String?): File? {
+    if (localDirectoryUri.isNullOrBlank()) return null
+    return File(File(File(appContext.filesDir, "workspaces"), root), "local")
 }
 
 internal fun workspaceRootfsReady(context: Context, root: String): Boolean {
@@ -313,8 +346,8 @@ internal class WorkspaceTerminalViewClient(
     }
 }
 
+private const val TAG = "WorkspaceTerminalSession"
 private const val WORKSPACE_DIR = "/workspace"
-private const val SKILLS_DIR = "/skills"
 
 // 一个 URL 最多还原跨越的软换行行数(向上/向下各算), 足够覆盖任意真实 URL
 private const val URL_MAX_WRAP_ROWS = 50

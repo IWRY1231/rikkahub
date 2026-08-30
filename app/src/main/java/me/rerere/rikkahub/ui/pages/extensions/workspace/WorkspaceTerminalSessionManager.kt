@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.rerere.rikkahub.AppScope
+import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -29,6 +30,7 @@ import java.util.concurrent.atomic.AtomicLong
 class WorkspaceTerminalSessionManager internal constructor(
     context: Context,
     private val appScope: AppScope,
+    private val workspaceRepository: WorkspaceRepository,
 ) {
     private val appContext = context.applicationContext
     private val workspaceStates = MutableStateFlow<Map<String, WorkspaceTerminalTabsState>>(emptyMap())
@@ -120,6 +122,12 @@ class WorkspaceTerminalSessionManager internal constructor(
         }
         updateState(root) { it.copy(isCreating = true) }
 
+        // 读取工作区的本地互通配置: 开关关闭时不挂载 Android 本地目录,
+        // 已授权 SAF 本地目录时创建会话前先把手机目录拉取到 /local 镜像
+        val workspace = runCatching { workspaceRepository.getByRoot(root) }.getOrNull()
+        val androidLocalAccess = workspace?.androidLocalAccess ?: false
+        val localDirectoryUri = workspace?.localDirectoryUri
+
         val prepared = if (initialState.readiness == WorkspaceTerminalReadiness.Ready) {
             true
         } else {
@@ -128,7 +136,12 @@ class WorkspaceTerminalSessionManager internal constructor(
                     if (!workspaceRootfsReady(appContext, root)) {
                         false
                     } else {
-                        prepareWorkspaceTerminalSession(appContext, root)
+                        prepareWorkspaceTerminalSession(
+                            context = appContext,
+                            root = root,
+                            androidLocalAccess = androidLocalAccess,
+                            localDirectoryUri = localDirectoryUri,
+                        )
                         true
                     }
                 }
@@ -160,6 +173,8 @@ class WorkspaceTerminalSessionManager internal constructor(
                 context = appContext,
                 root = root,
                 client = client,
+                androidLocalAccess = androidLocalAccess,
+                localDirectoryUri = localDirectoryUri,
             )
         }.onFailure { error ->
             Log.e(TAG, "Failed to create terminal for workspace $root", error)
@@ -197,6 +212,11 @@ class WorkspaceTerminalSessionManager internal constructor(
                     if (tab.id == tabId) tab.copy(finished = true) else tab
                 },
             ))
+        }
+        // 会话结束后把 /local 镜像中的变更写回手机本地目录
+        appScope.launch {
+            runCatching { workspaceRepository.syncLocalMirrorBack(root) }
+                .onFailure { Log.w(TAG, "syncLocalMirrorBack failed for $root", it) }
         }
     }
 
