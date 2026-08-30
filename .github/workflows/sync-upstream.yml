@@ -26,6 +26,8 @@ jobs:
         with:
           ref: ${{ env.TARGET_BRANCH }}
           fetch-depth: 0
+          # material3 模块的 dynamiccolor 源码来自 git 子模块, 必须拉取
+          submodules: recursive
 
       - name: Merge upstream
         id: sync
@@ -127,6 +129,7 @@ jobs:
         with:
           ref: ${{ env.TARGET_BRANCH }}
           fetch-depth: 0
+          submodules: recursive
 
       - name: Write google-services.json from secret
         if: steps.sync.outputs.updated == 'true'
