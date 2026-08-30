@@ -34,6 +34,8 @@
 | 文件 | 冲突场景 | 处理方式 |
 |------|---------|---------|
 | `app/src/main/AndroidManifest.xml` | 上游增删权限 | 保留两边的权限行即可，无逻辑冲突 |
+| `app/build.gradle.kts` | 上游改 defaultConfig | **保留本 fork 的 `applicationId = "me.iwry.rikkahub"`**（应用身份，避免与官方版冲突；namespace 不可改）|
+| `app/google-services.json` | （本 fork 独有文件） | 保持包名条目与 applicationId 一致（release/debug 两条）|
 | `RepositoryModule.kt` | 上游改 WorkspaceManager 构造参数 | 保持 `bindMounts = WorkspaceMounts.androidLocalMounts(context)` 与 `WorkspaceRepository(get()x5)` |
 | `DataSourceModule.kt` / `AppDatabase.kt` | **上游把 version 升到 25** | 把我们的两列合并进上游新迁移，或将 `Migration_24_25` 改名顺延（如 25→26）并保持 `hasColumn` 防御式写法；同时更新 Room schema |
 | `workspace/WorkspaceManager.kt` | 上游改 `resolveRootfsPath`/`executeCommand` 签名 | 保留 `includeAndroidLocal`/`extraBindMounts` 参数与 `/local` 解析分支，再叠加上游逻辑 |
