@@ -174,11 +174,12 @@ jobs:
         if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
         run: ./gradlew --no-daemon assembleDebug
 
-      - name: Rename APK
+      - name: Collect APK
         if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/*-debug.apk dist/RikkaHub-localaccess-debug.apk
+          find app/build/outputs/apk -name "*-debug.apk" -exec cp -v {} dist/ \;
+          ls -la dist
 
       - name: Upload artifact
         if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
