@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.data.repository
 
+import android.content.Context
+import android.net.Uri
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -13,17 +15,20 @@ import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.utils.JsonInstant
 import me.rerere.workspace.RootfsInstallProgress
 import me.rerere.workspace.RootfsInstaller
+import me.rerere.workspace.WorkspaceBindMount
 import me.rerere.workspace.WorkspaceCommandResult
 import me.rerere.workspace.WorkspaceFileEntry
 import me.rerere.workspace.WorkspaceManager
 import me.rerere.workspace.WorkspaceShellStatus
 import me.rerere.workspace.WorkspaceStorageArea
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import kotlin.uuid.Uuid
 
 class WorkspaceRepository(
+    private val context: Context,
     private val dao: WorkspaceDAO,
     private val manager: WorkspaceManager,
     private val rootfsInstaller: RootfsInstaller,
@@ -55,6 +60,9 @@ class WorkspaceRepository(
     }
 
     suspend fun getById(id: String): WorkspaceEntity? = dao.getById(id)
+
+    /** 按工作区 root 名查询（终端会话等只有 root 的场景使用） */
+    suspend fun getByRoot(root: String): WorkspaceEntity? = dao.getByRoot(root)
 
     suspend fun create(name: String): WorkspaceEntity {
         val id = Uuid.random().toString()
@@ -107,6 +115,82 @@ class WorkspaceRepository(
             )
         )
         return true
+    }
+
+    /** 切换「Android 本地读写工作区与本地互通」开关（默认开启） */
+    suspend fun setAndroidLocalAccess(id: String, enabled: Boolean): Boolean {
+        val workspace = dao.getById(id) ?: return false
+        dao.updateAndroidLocalAccess(id, enabled, System.currentTimeMillis())
+        return true
+    }
+
+    /**
+     * 设置工作区的本地目录（SAF tree Uri）。传 null 表示解除授权。
+     * 解除时清空镜像，避免残留内容被误挂载。
+     */
+    suspend fun setLocalDirectory(id: String, uri: String?): Boolean {
+        val workspace = dao.getById(id) ?: return false
+        dao.updateLocalDirectory(id, uri, System.currentTimeMillis())
+        withContext(Dispatchers.IO) {
+            if (uri.isNullOrBlank()) {
+                manager.localDir(workspace.root).deleteRecursively()
+            }
+        }
+        return true
+    }
+
+    /**
+     * 为工作区准备 /local 镜像：若已授权 SAF 目录且本地互通开启，
+     * 先把本地目录最新内容拉取到镜像，并返回 tree Uri（挂载 /local 用）。
+     */
+    private suspend fun prepareLocalMirror(workspace: WorkspaceEntity): Uri? {
+        if (!workspace.androidLocalAccess) return null
+        val uriString = workspace.localDirectoryUri
+        if (uriString.isNullOrBlank()) return null
+        val treeUri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return null
+        if (!LocalDirectorySync.hasPersistedPermission(context, treeUri)) return null
+        val mirror = manager.localDir(workspace.root)
+        mirror.mkdirs()
+        LocalDirectorySync.syncToMirror(context, treeUri, mirror)
+        return treeUri
+    }
+
+    /** 操作 /local 路径前先同步本地目录 -> 镜像，返回 tree Uri（非 /local 路径返回 null） */
+    private suspend fun syncLocalMirrorBefore(workspace: WorkspaceEntity, path: String): Uri? {
+        val localDir = WorkspaceManager.LOCAL_DIR
+        if (!path.startsWith("$localDir/") && path != localDir) return null
+        return try {
+            prepareLocalMirror(workspace)
+        } catch (e: Throwable) {
+            Log.w(TAG, "prepareLocalMirror failed", e)
+            null
+        }
+    }
+
+    /** 操作 /local 路径后把镜像变更写回本地目录 */
+    private suspend fun syncLocalMirrorAfter(workspace: WorkspaceEntity, treeUri: Uri?) {
+        if (treeUri == null) return
+        try {
+            LocalDirectorySync.syncMirrorBack(context, treeUri, manager.localDir(workspace.root))
+        } catch (e: Throwable) {
+            Log.w(TAG, "syncMirrorBack failed", e)
+        }
+    }
+
+    /** 把 /local 镜像中的变更写回本地目录（终端会话结束时调用） */
+    suspend fun syncLocalMirrorBack(root: String) {
+        val workspace = dao.getByRoot(root) ?: return
+        val uriString = workspace.localDirectoryUri
+        if (uriString.isNullOrBlank() || !workspace.androidLocalAccess) return
+        val treeUri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return
+        if (!LocalDirectorySync.hasPersistedPermission(context, treeUri)) return
+        withContext(Dispatchers.IO) {
+            try {
+                LocalDirectorySync.syncMirrorBack(context, treeUri, manager.localDir(root))
+            } catch (e: Throwable) {
+                Log.w(TAG, "syncLocalMirrorBack failed", e)
+            }
+        }
     }
 
     suspend fun installRootfs(
@@ -228,17 +312,18 @@ class WorkspaceRepository(
         manager.exportFile(workspace.root, path, area, outputStream)
     }
 
-    /** 按 Rootfs 内绝对路径读取文件大小, 支持 /workspace、bind mount 与 Rootfs 内部路径 */
+    /** 按 Rootfs 内绝对路径读取文件大小, 支持 /workspace、bind mount、/local 与 Rootfs 内部路径 */
     suspend fun rootfsFileSize(
         id: String,
         path: String,
     ): Long = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        manager.rootfsFileSize(workspace.root, path)
+        syncLocalMirrorBefore(workspace, path)
+        manager.rootfsFileSize(workspace.root, path, workspace.androidLocalAccess)
     }
 
-    /** 按 Rootfs 内绝对路径导出文件内容, 支持 /workspace、bind mount 与 Rootfs 内部路径 */
+    /** 按 Rootfs 内绝对路径导出文件内容, 支持 /workspace、bind mount、/local 与 Rootfs 内部路径 */
     suspend fun exportRootfsFile(
         id: String,
         path: String,
@@ -246,7 +331,26 @@ class WorkspaceRepository(
     ) = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        manager.exportRootfsFile(workspace.root, path, outputStream)
+        syncLocalMirrorBefore(workspace, path)
+        manager.exportRootfsFile(workspace.root, outputStream = outputStream, path = path, includeAndroidLocal = workspace.androidLocalAccess)
+    }
+
+    /**
+     * 按 Rootfs 内绝对路径写入 UTF-8 文本, 直接 Java IO 写入宿主机物理路径, 不经 PRoot,
+     * 因此 /sdcard 这类 FUSE 挂载点也能可靠读写。
+     */
+    suspend fun writeTextInRootfs(
+        id: String,
+        path: String,
+        text: String,
+        overwrite: Boolean,
+    ): WorkspaceFileEntry = withContext(Dispatchers.IO) {
+        val workspace = dao.getById(id) ?: error("Workspace not found: $id")
+        manager.ensureWorkspace(workspace.root)
+        val treeUri = syncLocalMirrorBefore(workspace, path)
+        val result = manager.writeRootfsText(workspace.root, path, text, overwrite, workspace.androidLocalAccess)
+        syncLocalMirrorAfter(workspace, treeUri)
+        result
     }
 
     suspend fun deleteFile(
@@ -281,11 +385,42 @@ class WorkspaceRepository(
         stdin: ByteArray? = null,
     ): WorkspaceCommandResult {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
-        // runInterruptible 让协程取消转化为线程中断，从而打断阻塞的 Process.waitFor 并杀掉进程
-        return runInterruptible(Dispatchers.IO) {
-            manager.ensureWorkspace(workspace.root)
-            manager.executeCommand(workspace.root, command, cwd, timeoutMillis, stdin)
+        // 仅当命令确实涉及 /local 时才同步本地目录到镜像并挂载 /local，
+        // 避免每次执行命令（如开发工具检测）都全量同步 SAF 目录导致卡死
+        val localDir = WorkspaceManager.LOCAL_DIR
+        val touchesLocal = command.contains(localDir) || command.contains("$localDir/")
+        val localUri = if (touchesLocal) {
+            try {
+                prepareLocalMirror(workspace)
+            } catch (e: Throwable) {
+                Log.w(TAG, "prepareLocalMirror failed", e)
+                null
+            }
+        } else {
+            null
         }
+        val extraBindMounts = if (localUri != null) {
+            listOf(WorkspaceBindMount(source = manager.localDir(workspace.root), target = localDir))
+        } else {
+            emptyList()
+        }
+        // runInterruptible 让协程取消转化为线程中断，从而打断阻塞的 Process.waitFor 并杀掉进程
+        val result = runInterruptible(Dispatchers.IO) {
+            manager.ensureWorkspace(workspace.root)
+            manager.executeCommand(
+                workspace.root,
+                command,
+                cwd,
+                timeoutMillis,
+                stdin,
+                includeAndroidLocal = workspace.androidLocalAccess,
+                extraBindMounts = extraBindMounts,
+            )
+        }
+        if (localUri != null) {
+            syncLocalMirrorAfter(workspace, localUri)
+        }
+        return result
     }
 
     suspend fun delete(id: String): Boolean {
