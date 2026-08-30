@@ -1,0 +1,178 @@
+name: Sync upstream & build
+
+# 每天(UTC 03:00 / 北京时间 11:00)自动同步原版 rikkahub, 合并成功则构建 APK 并发布 Release;
+# 出现冲突则自动创建 Issue 提示手动处理。
+# 手动触发: Actions -> Sync upstream & build -> Run workflow
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+env:
+  UPSTREAM_REPO: "https://github.com/rikkahub/rikkahub.git"
+  UPSTREAM_BRANCH: "master"
+  TARGET_BRANCH: "main"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_BRANCH }}
+          fetch-depth: 0
+
+      - name: Merge upstream
+        id: sync
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "$UPSTREAM_REPO"
+          git fetch upstream "$UPSTREAM_BRANCH"
+
+          UPSTREAM_HEAD="$(git rev-parse upstream/$UPSTREAM_BRANCH)"
+          echo "upstream_head=$UPSTREAM_HEAD" >> "$GITHUB_OUTPUT"
+
+          if git merge-base --is-ancestor "upstream/$UPSTREAM_BRANCH" HEAD; then
+            echo "Upstream has no new commits."
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "updated=false" >> "$GITHUB_OUTPUT"
+          echo "conflict=false" >> "$GITHUB_OUTPUT"
+
+          if git merge --no-edit "upstream/$UPSTREAM_BRANCH"; then
+            git push origin "$TARGET_BRANCH"
+            echo "updated=true" >> "$GITHUB_OUTPUT"
+          else
+            git merge --abort || true
+            git diff --name-only "$(git merge-base HEAD "upstream/$UPSTREAM_BRANCH")" "upstream/$UPSTREAM_BRANCH" > changed-by-upstream.txt || true
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create issue when conflicts need manual work
+        if: steps.sync.outputs.conflict == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let changed = '';
+            try { changed = fs.readFileSync('changed-by-upstream.txt', 'utf8'); } catch (e) {}
+            const marker = '<!-- sync-upstream-conflict -->';
+            const title = '上游同步冲突：需要手动合并 rikkahub/master';
+            const body = `${marker}
+            自动同步时 \`git merge upstream/master\` 产生冲突，本分支的「工作区本地互通」功能补丁需要手动解决冲突。
+
+            ## 本地处理步骤
+
+            \`\`\`bash
+            git clone https://github.com/${context.repo.owner}/${context.repo.repo}.git
+            cd ${context.repo.repo}
+            git remote add upstream https://github.com/rikkahub/rikkahub.git
+            git fetch upstream master
+            git merge upstream/master
+            # 逐个解决冲突后:
+            git commit && git push
+            \`\`\`
+
+            ## 本功能最可能冲突的文件（解决冲突时参考 docs/PORT.md）
+
+            - app/src/main/AndroidManifest.xml （权限声明附近）
+            - app/.../di/RepositoryModule.kt （WorkspaceManager 的 bindMounts）
+            - app/.../di/DataSourceModule.kt （addMigrations 列表）
+            - app/.../data/db/AppDatabase.kt （数据库版本号）
+            - workspace/.../WorkspaceManager.kt （resolveRootfsPath/executeCommand 签名）
+            - app/.../data/ai/tools/WorkspaceTools.kt （工具描述与 WRITABLE_ROOT_PREFIXES）
+            - app/.../data/ai/transformers/WorkspaceReminderTransformer.kt
+            - app/.../ui/pages/extensions/workspace/WorkspaceDetailPage.kt
+
+            ## 上游本次变更的文件
+
+            \`\`\`
+            ${changed || '(无法列出)'}
+            \`\`\`
+            `;
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', per_page: 100,
+            });
+            const existing = issues.data.find(i => i.title === title && i.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.number, body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body,
+              });
+            }
+
+      - name: Checkout merged result
+        if: steps.sync.outputs.updated == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_BRANCH }}
+          fetch-depth: 0
+
+      - name: Write google-services.json from secret
+        if: steps.sync.outputs.updated == 'true'
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+            echo "google-services.json written from secret"
+          else
+            echo "::warning::Secret GOOGLE_SERVICES_JSON not set. 原版要求 app/google-services.json 才能构建，本次跳过构建。可在仓库 Settings -> Secrets 添加该文件内容。"
+          fi
+          [ -f app/google-services.json ] || echo "skip_build=true" >> "$GITHUB_ENV"
+
+      - name: Set up JDK 17
+        if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Rename APK
+        if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/*-debug.apk dist/RikkaHub-localaccess-debug.apk
+
+      - name: Upload artifact
+        if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: dist/*.apk
+          if-no-files-found: error
+
+      - name: Create release
+        if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "auto-${{ steps.sync.outputs.upstream_head }}"
+          name: "同步上游 ${{ steps.sync.outputs.upstream_head }}"
+          body: |
+            自动合并 rikkahub/rikkahub@${{ steps.sync.outputs.upstream_head }} 后构建。
+            包含「工作区本地读写 / 本地互通(/local) / 所有文件访问(/sdcard)」功能。
+          files: dist/*.apk
+          fail_on_unmatched_files: true
