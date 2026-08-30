@@ -117,12 +117,25 @@ class WorkspaceManager(
         root: String,
         path: String,
         includeAndroidLocal: Boolean = true,
+        extraBindMounts: List<WorkspaceBindMount> = emptyList(),
     ): RootfsLocation {
         val trimmed = path.trim().trimEnd('/').ifBlank { "/" }
         require(trimmed.startsWith("/")) { "Rootfs path must be absolute: $path" }
 
         val mounts = if (includeAndroidLocal) sortedBindMounts else emptyList()
         mounts.forEach { mount ->
+            val target = mount.target.trimEnd('/')
+            if (trimmed == target) return RootfsLocation(mount.source, "")
+            if (trimmed.startsWith("$target/")) {
+                return RootfsLocation(
+                    rootDir = mount.source,
+                    relativePath = trimmed.removePrefix(target).trimStart('/'),
+                )
+            }
+        }
+
+        // 动态附加挂载(如按工作区配置的 /sdcard 子目录), 与静态挂载表同等参与解析
+        extraBindMounts.forEach { mount ->
             val target = mount.target.trimEnd('/')
             if (trimmed == target) return RootfsLocation(mount.source, "")
             if (trimmed.startsWith("$target/")) {
@@ -148,16 +161,23 @@ class WorkspaceManager(
         return RootfsLocation(linuxDir(root), trimmed.trimStart('/'))
     }
 
-    fun rootfsFileSize(root: String, path: String, includeAndroidLocal: Boolean = true): Long =
-        resolveRootfsFile(root, path, includeAndroidLocal).also { it.requireReadableFile(path) }.length()
+    fun rootfsFileSize(
+        root: String,
+        path: String,
+        includeAndroidLocal: Boolean = true,
+        extraBindMounts: List<WorkspaceBindMount> = emptyList(),
+    ): Long =
+        resolveRootfsFile(root, path, includeAndroidLocal, extraBindMounts)
+            .also { it.requireReadableFile(path) }.length()
 
     fun exportRootfsFile(
         root: String,
         path: String,
         outputStream: OutputStream,
         includeAndroidLocal: Boolean = true,
+        extraBindMounts: List<WorkspaceBindMount> = emptyList(),
     ) {
-        val file = resolveRootfsFile(root, path, includeAndroidLocal)
+        val file = resolveRootfsFile(root, path, includeAndroidLocal, extraBindMounts)
         file.requireReadableFile(path)
         outputStream.use { out -> file.inputStream().use { it.copyTo(out) } }
     }
@@ -174,8 +194,9 @@ class WorkspaceManager(
         text: String,
         overwrite: Boolean = true,
         includeAndroidLocal: Boolean = true,
+        extraBindMounts: List<WorkspaceBindMount> = emptyList(),
     ): WorkspaceFileEntry =
-        writeRootfsBytes(root, path, text.toByteArray(Charsets.UTF_8), overwrite, includeAndroidLocal)
+        writeRootfsBytes(root, path, text.toByteArray(Charsets.UTF_8), overwrite, includeAndroidLocal, extraBindMounts)
 
     /** 与 [writeRootfsText] 对称的二进制写入, 用于导入离线安装包等场景 */
     fun writeRootfsBytes(
@@ -184,8 +205,9 @@ class WorkspaceManager(
         bytes: ByteArray,
         overwrite: Boolean = true,
         includeAndroidLocal: Boolean = true,
+        extraBindMounts: List<WorkspaceBindMount> = emptyList(),
     ): WorkspaceFileEntry {
-        val location = resolveRootfsPath(root, path, includeAndroidLocal)
+        val location = resolveRootfsPath(root, path, includeAndroidLocal, extraBindMounts)
         val file = fileSystem.resolve(location.rootDir, location.relativePath)
         require(!file.exists() || overwrite) { "File already exists: $path" }
         require(!file.exists() || file.isFile) { "Path is not a file: $path" }
@@ -200,13 +222,13 @@ class WorkspaceManager(
         )
     }
 
-    private fun resolveRootfsFile(root: String, path: String, includeAndroidLocal: Boolean = true): File {
-        val location = resolveRootfsPath(root, path, includeAndroidLocal)
-        return fileSystem.resolve(location.rootDir, location.relativePath)
-    }
-
-    private fun resolveRootfsFile(root: String, path: String): File {
-        val location = resolveRootfsPath(root, path)
+    private fun resolveRootfsFile(
+        root: String,
+        path: String,
+        includeAndroidLocal: Boolean = true,
+        extraBindMounts: List<WorkspaceBindMount> = emptyList(),
+    ): File {
+        val location = resolveRootfsPath(root, path, includeAndroidLocal, extraBindMounts)
         return fileSystem.resolve(location.rootDir, location.relativePath)
     }
 

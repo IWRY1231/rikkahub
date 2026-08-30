@@ -30,6 +30,9 @@ interface WorkspaceDAO {
     @Query("UPDATE workspaces SET local_directory_uri = :uri, updated_at = :updatedAt WHERE id = :id")
     suspend fun updateLocalDirectory(id: String, uri: String?, updatedAt: Long): Int
 
+    @Query("UPDATE workspaces SET sdcard_subpath = :subPath, updated_at = :updatedAt WHERE id = :id")
+    suspend fun updateSdcardSubPath(id: String, subPath: String?, updatedAt: Long): Int
+
     @Query("SELECT * FROM workspaces WHERE root = :root LIMIT 1")
     suspend fun getByRoot(root: String): WorkspaceEntity?
 

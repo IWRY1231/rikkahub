@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.db.dao.WorkspaceDAO
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
+import me.rerere.rikkahub.data.files.WorkspaceMounts
 import me.rerere.rikkahub.utils.JsonInstant
 import me.rerere.workspace.RootfsInstallProgress
 import me.rerere.workspace.RootfsInstaller
@@ -177,6 +178,17 @@ class WorkspaceRepository(
         }
     }
 
+    /** 设置工作区的 /sdcard 挂载子目录（直连模式）。传 null/空白 = 挂载整个 /sdcard。 */
+    suspend fun setSdcardSubPath(id: String, subPath: String?): Boolean {
+        val workspace = dao.getById(id) ?: return false
+        val cleaned = subPath?.trim()?.trim('/')
+            ?.split('/')?.filter { it.isNotBlank() && it != "." && it != ".." }
+            ?.joinToString("/")
+            ?.takeIf { it.isNotEmpty() }
+        dao.updateSdcardSubPath(id, cleaned, System.currentTimeMillis())
+        return true
+    }
+
     /** 把 /local 镜像中的变更写回本地目录（终端会话结束时调用） */
     suspend fun syncLocalMirrorBack(root: String) {
         val workspace = dao.getByRoot(root) ?: return
@@ -320,7 +332,10 @@ class WorkspaceRepository(
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
         syncLocalMirrorBefore(workspace, path)
-        manager.rootfsFileSize(workspace.root, path, workspace.androidLocalAccess)
+        manager.rootfsFileSize(
+            workspace.root, path, workspace.androidLocalAccess,
+            extraBindMounts = listOfNotNull(WorkspaceMounts.sdcardMount(workspace.sdcardSubPath)),
+        )
     }
 
     /** 按 Rootfs 内绝对路径导出文件内容, 支持 /workspace、bind mount、/local 与 Rootfs 内部路径 */
@@ -332,7 +347,10 @@ class WorkspaceRepository(
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
         syncLocalMirrorBefore(workspace, path)
-        manager.exportRootfsFile(workspace.root, outputStream = outputStream, path = path, includeAndroidLocal = workspace.androidLocalAccess)
+        manager.exportRootfsFile(
+            workspace.root, path, outputStream, workspace.androidLocalAccess,
+            extraBindMounts = listOfNotNull(WorkspaceMounts.sdcardMount(workspace.sdcardSubPath)),
+        )
     }
 
     /**
@@ -348,7 +366,10 @@ class WorkspaceRepository(
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
         val treeUri = syncLocalMirrorBefore(workspace, path)
-        val result = manager.writeRootfsText(workspace.root, path, text, overwrite, workspace.androidLocalAccess)
+        val result = manager.writeRootfsText(
+            workspace.root, path, text, overwrite, workspace.androidLocalAccess,
+            extraBindMounts = listOfNotNull(WorkspaceMounts.sdcardMount(workspace.sdcardSubPath)),
+        )
         syncLocalMirrorAfter(workspace, treeUri)
         result
     }
@@ -399,10 +420,12 @@ class WorkspaceRepository(
         } else {
             null
         }
-        val extraBindMounts = if (localUri != null) {
-            listOf(WorkspaceBindMount(source = manager.localDir(workspace.root), target = localDir))
-        } else {
-            emptyList()
+        val extraBindMounts = buildList {
+            if (localUri != null) {
+                add(WorkspaceBindMount(source = manager.localDir(workspace.root), target = localDir))
+            }
+            // 用户配置的 /sdcard 挂载子目录（直连, 无需镜像同步）
+            WorkspaceMounts.sdcardMount(workspace.sdcardSubPath)?.let { add(it) }
         }
         // runInterruptible 让协程取消转化为线程中断，从而打断阻塞的 Process.waitFor 并杀掉进程
         val result = runInterruptible(Dispatchers.IO) {

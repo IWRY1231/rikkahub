@@ -1191,6 +1191,9 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="workspace_detail_all_files_access_grant">授予</string>
   <string name="workspace_detail_all_files_access_granted">已授予</string>
   <string name="workspace_detail_all_files_access_restart">授予后请重启应用</string>
+  <string name="workspace_detail_sdcard_subpath">/sdcard 挂载子目录（可选）</string>
+  <string name="workspace_detail_sdcard_subpath_desc">仅挂载该文件夹，如 Download 或 DCIM/Camera（直连零拷贝，无需同步）。留空挂载整个 /sdcard。保存后生效，终端若开启需重开</string>
+  <string name="workspace_detail_sdcard_subpath_save">保存</string>
   <string name="workspace_detail_local_directory">本地目录</string>
   <string name="workspace_detail_local_directory_desc">选择手机上的一个文件夹同步到工作区作为 /local。无需所有文件权限</string>
   <string name="workspace_detail_local_directory_set">已同步到工作区作为 /local</string>

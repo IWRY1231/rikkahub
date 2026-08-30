@@ -40,6 +40,10 @@ data class WorkspaceEntity(
     // 为空表示未授权本地目录。该方式不依赖 MANAGE_EXTERNAL_STORAGE，任意目录都可读写。
     @ColumnInfo("local_directory_uri")
     val localDirectoryUri: String? = null,
+    // /sdcard 挂载子目录（直连模式）：如 "Download" → 挂载 /sdcard/Download，
+    // 空 = 挂载整个 /sdcard。需要「所有文件访问」权限。
+    @ColumnInfo("sdcard_subpath")
+    val sdcardSubPath: String? = null,
 ) {
     fun toolApprovalOverrides(): Map<String, Boolean> = runCatching {
         JsonInstant.decodeFromString<Map<String, Boolean>>(toolApprovals)

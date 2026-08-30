@@ -199,6 +199,7 @@ fun WorkspaceDetailPage(id: String) {
                     onToolApprovalChange = vm::setToolApproval,
                     onAndroidLocalAccessChange = vm::setAndroidLocalAccess,
                     onLocalDirectoryChange = vm::setLocalDirectory,
+                    onSdcardSubPathChange = vm::setSdcardSubPath,
                 )
 
                 1 -> WorkspaceFilesPage(
@@ -324,6 +325,7 @@ private fun WorkspaceBasicPage(
     onToolApprovalChange: (String, Boolean) -> Unit,
     onAndroidLocalAccessChange: (Boolean) -> Unit,
     onLocalDirectoryChange: (String?) -> Unit,
+    onSdcardSubPathChange: (String?) -> Unit,
 ) {
     val context = LocalContext.current
     // 手机全部文件访问权限状态, 从系统设置返回后(ON_RESUME)自动刷新
@@ -431,6 +433,32 @@ private fun WorkspaceBasicPage(
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
+
+                    // /sdcard 挂载子目录(直连模式): 留空挂载整盘, 填写则仅挂载该子目录
+                    var sdcardSubPathInput by remember(workspace?.sdcardSubPath) {
+                        mutableStateOf(workspace?.sdcardSubPath.orEmpty())
+                    }
+                    OutlinedTextField(
+                        value = sdcardSubPathInput,
+                        onValueChange = { sdcardSubPathInput = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text(stringResource(R.string.workspace_detail_sdcard_subpath)) },
+                        placeholder = { Text("Download") },
+                        supportingText = { Text(stringResource(R.string.workspace_detail_sdcard_subpath_desc)) },
+                        isError = sdcardSubPathInput.split('/').any { it == ".." },
+                        trailingIcon = {
+                            TextButton(
+                                onClick = {
+                                    onSdcardSubPathChange(
+                                        sdcardSubPathInput.trim().trim('/').ifBlank { null }
+                                    )
+                                },
+                            ) {
+                                Text(stringResource(R.string.workspace_detail_sdcard_subpath_save))
+                            }
+                        },
+                    )
 
                     // 本地目录互通: SAF 目录授权, 挂载为 /local, 不依赖「所有文件访问」权限
                     HorizontalDivider()

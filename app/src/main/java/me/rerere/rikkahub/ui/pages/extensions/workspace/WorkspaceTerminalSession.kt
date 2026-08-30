@@ -30,6 +30,7 @@ internal fun createWorkspaceTerminalSession(
     client: TerminalSessionClient,
     androidLocalAccess: Boolean = true,
     localDirectoryUri: String? = null,
+    sdcardSubPath: String? = null,
 ): TerminalSession {
     val appContext = context.applicationContext
     val workspaceDir = File(File(appContext.filesDir, "workspaces"), root)
@@ -56,6 +57,9 @@ internal fun createWorkspaceTerminalSession(
     // /sdcard 与 /local 在终端与工具中行为一致; 关闭本地互通时不挂载任何 Android 本地目录
     if (androidLocalAccess) {
         args += buildBindMountArgs(WorkspaceMounts.androidLocalMounts(appContext))
+        WorkspaceMounts.sdcardMount(sdcardSubPath)?.let { sdcard ->
+            args += buildBindMountArgs(listOf(sdcard))
+        }
         localDirMirror(appContext, root, localDirectoryUri)?.let { mirror ->
             args += buildBindMountArgs(listOf(WorkspaceBindMount(mirror, WorkspaceManager.LOCAL_DIR)))
         }

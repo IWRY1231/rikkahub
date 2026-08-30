@@ -175,6 +175,7 @@ class WorkspaceTerminalSessionManager internal constructor(
                 client = client,
                 androidLocalAccess = androidLocalAccess,
                 localDirectoryUri = localDirectoryUri,
+                sdcardSubPath = workspace?.sdcardSubPath,
             )
         }.onFailure { error ->
             Log.e(TAG, "Failed to create terminal for workspace $root", error)

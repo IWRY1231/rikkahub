@@ -197,6 +197,16 @@ class WorkspaceDetailVM(
         }
     }
 
+    /** 设置 /sdcard 挂载子目录（直连模式）；空 = 挂载整个 /sdcard。切换后重启终端会话 */
+    fun setSdcardSubPath(path: String?) {
+        viewModelScope.launch {
+            val workspace = state.value.workspace ?: return@launch
+            repository.setSdcardSubPath(workspace.id, path)
+            terminalSessionManager.closeWorkspace(workspace.root)
+            loadWorkspace()
+        }
+    }
+
     fun installRootfs(url: String) {
         viewModelScope.launch {
             _installError.value = null
