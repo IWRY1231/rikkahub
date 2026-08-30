@@ -1206,9 +1206,11 @@
   <string name="workspace_detail_all_files_access_grant">Grant</string>
   <string name="workspace_detail_all_files_access_granted">Granted</string>
   <string name="workspace_detail_all_files_access_restart">Please restart the app after granting</string>
-  <string name="workspace_detail_sdcard_subpath">Mount subdirectory under /sdcard (optional)</string>
-  <string name="workspace_detail_sdcard_subpath_desc">Only mount this folder, e.g. Download or DCIM/Camera (direct access, no sync). Leave empty to mount the entire /sdcard. Takes effect after saving; restart the terminal if open</string>
-  <string name="workspace_detail_sdcard_subpath_save">Save</string>
+  <string name="workspace_detail_sdcard_subpath">Mount subdirectory</string>
+  <string name="workspace_detail_sdcard_subpath_default">/sdcard (entire phone storage)</string>
+  <string name="workspace_detail_sdcard_subpath_pick">Pick folder</string>
+  <string name="workspace_detail_sdcard_subpath_reset">Reset</string>
+  <string name="workspace_detail_sdcard_subpath_unsupported">Only folders on the phone\'s internal storage are supported</string>
   <string name="workspace_detail_local_directory">Local directory</string>
   <string name="workspace_detail_local_directory_desc">Pick a folder on your phone to sync into the workspace as /local. No all-files permission needed</string>
   <string name="workspace_detail_local_directory_set">Synced into the workspace as /local</string>

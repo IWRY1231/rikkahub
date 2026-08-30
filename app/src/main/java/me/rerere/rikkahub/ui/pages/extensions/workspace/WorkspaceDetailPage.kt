@@ -1,7 +1,9 @@
 package me.rerere.rikkahub.ui.pages.extensions.workspace
 
 import android.content.Intent
+import android.provider.DocumentsContract
 import android.util.Log
+import android.widget.Toast
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import androidx.activity.compose.BackHandler
@@ -434,31 +436,66 @@ private fun WorkspaceBasicPage(
                         )
                     }
 
-                    // /sdcard 挂载子目录(直连模式): 留空挂载整盘, 填写则仅挂载该子目录
-                    var sdcardSubPathInput by remember(workspace?.sdcardSubPath) {
-                        mutableStateOf(workspace?.sdcardSubPath.orEmpty())
+                    // /sdcard 挂载子目录(直连模式): 通过系统目录选择器选择, 默认挂载整盘
+                    val sdcardSubPathDisplay = if (workspace?.sdcardSubPath.isNullOrBlank()) {
+                        stringResource(R.string.workspace_detail_sdcard_subpath_default)
+                    } else {
+                        "/sdcard/${workspace?.sdcardSubPath}"
                     }
-                    OutlinedTextField(
-                        value = sdcardSubPathInput,
-                        onValueChange = { sdcardSubPathInput = it },
+                    val sdcardDirPicker = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.OpenDocumentTree()
+                    ) { uri ->
+                        if (uri == null) return@rememberLauncherForActivityResult
+                        // 从 tree Uri 提取相对路径: primary:Download → Download;
+                        // 选择内置存储根目录(primary:) = 重置为挂载整个 /sdcard
+                        val docId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull()
+                        if (docId == null || !docId.startsWith("primary:")) {
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.workspace_detail_sdcard_subpath_unsupported),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                            return@rememberLauncherForActivityResult
+                        }
+                        val relative = docId.removePrefix("primary:").trim('/')
+                        onSdcardSubPathChange(relative.ifBlank { null })
+                    }
+                    val sdcardTreeInitialUri = remember(workspace?.sdcardSubPath) {
+                        runCatching {
+                            DocumentsContract.buildDocumentUri(
+                                "com.android.externalstorage.documents",
+                                "primary:${workspace?.sdcardSubPath.orEmpty().trim('/')}",
+                            )
+                        }.getOrNull()
+                    }
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        label = { Text(stringResource(R.string.workspace_detail_sdcard_subpath)) },
-                        placeholder = { Text("Download") },
-                        supportingText = { Text(stringResource(R.string.workspace_detail_sdcard_subpath_desc)) },
-                        isError = sdcardSubPathInput.split('/').any { it == ".." },
-                        trailingIcon = {
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.workspace_detail_sdcard_subpath),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                text = sdcardSubPathDisplay,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
                             TextButton(
-                                onClick = {
-                                    onSdcardSubPathChange(
-                                        sdcardSubPathInput.trim().trim('/').ifBlank { null }
-                                    )
-                                },
+                                onClick = { sdcardDirPicker.launch(sdcardTreeInitialUri) },
                             ) {
-                                Text(stringResource(R.string.workspace_detail_sdcard_subpath_save))
+                                Text(stringResource(R.string.workspace_detail_sdcard_subpath_pick))
                             }
-                        },
-                    )
+                            if (!workspace?.sdcardSubPath.isNullOrBlank()) {
+                                TextButton(onClick = { onSdcardSubPathChange(null) }) {
+                                    Text(stringResource(R.string.workspace_detail_sdcard_subpath_reset))
+                                }
+                            }
+                        }
+                    }
 
                     // 本地目录互通: SAF 目录授权, 挂载为 /local, 不依赖「所有文件访问」权限
                     HorizontalDivider()
