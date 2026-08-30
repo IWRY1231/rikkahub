@@ -20,6 +20,8 @@ data class WorkspaceShellContext(
     val timeoutMillis: Long,
     val stdin: ByteArray? = null,
     val bindMounts: List<WorkspaceBindMount> = emptyList(),
+    /** 追加在默认挂载表之后的临时挂载(如按需挂载的 /local 镜像) */
+    val extraBindMounts: List<WorkspaceBindMount> = emptyList(),
 )
 
 class HostShellRunner : WorkspaceShellRunner {
