@@ -14,7 +14,6 @@ import me.rerere.ai.ui.toMetadata
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.utils.generateUnifiedDiff
-import me.rerere.workspace.WorkspaceCommandResult
 import me.rerere.workspace.WorkspaceFileEntry
 import me.rerere.workspace.WorkspaceManager
 import org.koin.java.KoinJavaComponent.getKoin
@@ -68,6 +67,7 @@ private fun createReadFileTool(
     description = """
         Read a file using the assistant's bound workspace Rootfs. Paths must be absolute inside Rootfs.
         Use /workspace for the workspace files area.
+        Phone storage is mounted at /sdcard when granted.
         Supports UTF-8 text files and image files (png, jpg, jpeg, gif, webp, bmp, svg, heic, heif, avif, ico).
     """.trimIndent().replace("\n", " "),
     parameters = {
@@ -106,6 +106,7 @@ private fun createWriteFileTool(
     description = """
         Write a UTF-8 text file using the assistant's bound workspace Rootfs. Paths must be absolute inside Rootfs.
         Use /workspace for the workspace files area.
+        Phone storage is mounted at /sdcard when granted.
     """.trimIndent().replace("\n", " "),
     parameters = {
         InputSchema.Obj(
@@ -143,6 +144,7 @@ private fun createEditFileTool(
     description = """
         Edit a UTF-8 text file using the assistant's bound workspace Rootfs. Paths must be absolute inside Rootfs.
         Use /workspace for the workspace files area.
+        Phone storage is mounted at /sdcard when granted.
         Provide old_text and new_text. By default old_text must occur exactly once; set replace_all=true to replace every occurrence.
         If no exact match is found, whitespace-tolerant line matching is attempted automatically.
     """.trimIndent().replace("\n", " "),
@@ -209,6 +211,7 @@ private fun createShellTool(
     name = "workspace_shell",
     description = buildString {
         append("Run a shell command in the assistant's bound workspace Rootfs. The workspace files area is mounted at /workspace. ")
+        append("Phone storage is mounted at /sdcard when granted. ")
         append("Use cwd for a path relative to the workspace files root. ")
         if (!defaultCwd.isNullOrBlank()) {
             append("Defaults to '$defaultCwd'. ")
@@ -311,91 +314,6 @@ private suspend fun WorkspaceRepository.readImageInRootfs(
     )
 }
 
-private suspend fun WorkspaceRepository.writeTextInRootfs(
-    workspaceId: String,
-    path: String,
-    text: String,
-    overwrite: Boolean,
-): WorkspaceFileEntry {
-    val pathArg = path.shellQuote()
-    val result = runRootfsCommand(
-        workspaceId = workspaceId,
-        action = "Write file",
-        command = """
-            if [ -e $pathArg ] && [ ${(!overwrite).shellFlag()} = 1 ]; then
-              printf '%s\n' ${"File already exists: $path".shellQuote()} >&2
-              exit 1
-            fi
-            if [ -e $pathArg ] && [ ! -f $pathArg ]; then
-              printf '%s\n' ${"Path is not a file: $path".shellQuote()} >&2
-              exit 1
-            fi
-            parent=${'$'}(dirname -- $pathArg) || exit 1
-            mkdir -p -- "${'$'}parent" || exit 1
-            cat > $pathArg || exit 1
-            ${statEntryCommand(path)}
-        """.trimIndent(),
-        stdin = text.toByteArray(Charsets.UTF_8),
-    )
-    return result.stdout.parseRootfsEntry()
-}
-
-private suspend fun WorkspaceRepository.runRootfsCommand(
-    workspaceId: String,
-    action: String,
-    command: String,
-    stdin: ByteArray? = null,
-): WorkspaceCommandResult {
-    val result = executeCommand(
-        id = workspaceId,
-        command = command,
-        timeoutMillis = WorkspaceManager.DEFAULT_COMMAND_TIMEOUT_MS,
-        stdin = stdin,
-    )
-    if (result.timedOut) {
-        error("$action timed out")
-    }
-    if (result.exitCode != 0) {
-        val message = result.stderr.ifBlank { result.stdout }.trim()
-        error(if (message.isBlank()) "$action failed with exit code ${result.exitCode}" else message)
-    }
-    if (result.truncated) {
-        error("$action output is too large")
-    }
-    return result
-}
-
-private fun statEntryCommand(path: String): String {
-    val pathArg = path.shellQuote()
-    return """
-        if [ -d $pathArg ]; then entry_type=d; else entry_type=f; fi
-        entry_size=${'$'}(stat -c '%s' -- $pathArg) || exit 1
-        entry_mtime=${'$'}(stat -c '%Y' -- $pathArg) || exit 1
-        printf '%s\0%s\0%s\0%s\0' "${'$'}entry_type" "${'$'}entry_size" "${'$'}entry_mtime" $pathArg
-    """.trimIndent()
-}
-
-private fun String.parseRootfsEntry(): WorkspaceFileEntry =
-    parseRootfsEntries().singleOrNull() ?: error("Invalid file metadata output")
-
-private fun String.parseRootfsEntries(): List<WorkspaceFileEntry> {
-    val fields = split('\u0000').dropLastWhile { it.isEmpty() }
-    require(fields.size % 4 == 0) { "Invalid file metadata output" }
-    return fields.chunked(4).map { chunk ->
-        val type = chunk[0]
-        val size = chunk[1].toLongOrNull() ?: error("Invalid file size: ${chunk[1]}")
-        val updatedAt = (chunk[2].toLongOrNull() ?: error("Invalid file mtime: ${chunk[2]}")) * 1_000L
-        val path = chunk[3]
-        WorkspaceFileEntry(
-            path = path,
-            name = path.rootfsName(),
-            isDirectory = type == "d",
-            sizeBytes = size,
-            updatedAt = updatedAt,
-        )
-    }
-}
-
 private fun kotlinx.serialization.json.JsonObject.absolutePath(name: String): String {
     val path = string(name)?.replace('\\', '/')?.trim() ?: error("$name is required")
     require(path.isNotBlank()) { "$name is required" }
@@ -404,8 +322,8 @@ private fun kotlinx.serialization.json.JsonObject.absolutePath(name: String): St
     return path
 }
 
-// 免强制审批的可写安全区: 工作区文件目录, 以及临时目录 /tmp
-private val WRITABLE_ROOT_PREFIXES = listOf("/workspace", "/tmp")
+// 免强制审批的可写安全区: 工作区文件目录、临时目录 /tmp, 以及已授权本地访问后的手机存储 /sdcard
+private val WRITABLE_ROOT_PREFIXES = listOf("/workspace", "/tmp", "/sdcard")
 
 private fun kotlinx.serialization.json.JsonElement.pathOutsideWritableRoots(name: String): Boolean =
     runCatching {
@@ -418,14 +336,6 @@ private fun String.isOutsideWritableRoots(): Boolean {
         normalized == prefix || normalized.startsWith("$prefix/")
     }
 }
-
-private fun String.rootfsName(): String =
-    trimEnd('/').substringAfterLast('/').ifBlank { "/" }
-
-private fun String.shellQuote(): String =
-    "'" + replace("'", "'\"'\"'") + "'"
-
-private fun Boolean.shellFlag(): Int = if (this) 1 else 0
 
 private fun JsonObjectBuilder.putPathProperty(required: Boolean) {
     put("path", buildJsonObject {
