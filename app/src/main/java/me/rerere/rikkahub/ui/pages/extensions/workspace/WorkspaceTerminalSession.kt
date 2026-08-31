@@ -22,6 +22,7 @@ import me.rerere.workspace.RootfsPatcher
 import me.rerere.workspace.WorkspaceBindMount
 import me.rerere.workspace.WorkspaceManager
 import me.rerere.workspace.buildBindMountArgs
+import me.rerere.workspace.enforceSdcardFallbackGuard
 import java.io.File
 
 internal fun createWorkspaceTerminalSession(
