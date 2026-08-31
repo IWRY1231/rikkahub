@@ -107,6 +107,7 @@ internal suspend fun prepareWorkspaceTerminalSession(
     root: String,
     androidLocalAccess: Boolean = true,
     localDirectoryUri: String? = null,
+    sdcardSubPath: String? = null,
 ) {
     val appContext = context.applicationContext
     val workspaceDir = File(File(appContext.filesDir, "workspaces"), root)
@@ -118,6 +119,13 @@ internal suspend fun prepareWorkspaceTerminalSession(
         linuxDir,
         RootfsPatchOptions(nameservers = appContext.activeDnsServers())
     )
+    // /sdcard 部分挂载时同样启用沙盒占位防护(只读+告示), 与 AI 命令执行行为一致
+    if (androidLocalAccess) {
+        enforceSdcardFallbackGuard(
+            linuxDir,
+            listOfNotNull(WorkspaceMounts.sdcardMount(sdcardSubPath)),
+        )
+    }
     val mirror = localDirMirror(appContext, root, localDirectoryUri)
     if (mirror != null && androidLocalAccess) {
         mirror.mkdirs()

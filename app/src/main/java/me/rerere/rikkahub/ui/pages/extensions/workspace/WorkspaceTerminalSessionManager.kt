@@ -141,6 +141,7 @@ class WorkspaceTerminalSessionManager internal constructor(
                             root = root,
                             androidLocalAccess = androidLocalAccess,
                             localDirectoryUri = localDirectoryUri,
+                            sdcardSubPath = workspace?.sdcardSubPath,
                         )
                         true
                     }

@@ -146,6 +146,24 @@ class WorkspaceManager(
             }
         }
 
+        // /sdcard 部分挂载防护: 未挂载的 /sdcard 子路径显式报错, 而不是静默落进沙盒占位目录
+        if (trimmed == "/sdcard" || trimmed.startsWith("/sdcard/")) {
+            val sdcardTargets = (mounts + extraBindMounts)
+                .map { it.target.trimEnd('/') }
+                .filter { it == "/sdcard" || it.startsWith("/sdcard/") }
+            if (sdcardTargets.none { target -> trimmed == target || trimmed.startsWith("$target/") }) {
+                val available = if (sdcardTargets.isEmpty()) {
+                    "未挂载(本地互通已关闭或未授权)"
+                } else {
+                    sdcardTargets.joinToString(", ")
+                }
+                error(
+                    "/sdcard 处于部分挂载模式: 当前仅 $available 可访问; " +
+                        "\"$trimmed\" 不在挂载范围内, 已阻止本次操作(否则会静默写入沙盒占位目录, 文件不会出现在手机上)"
+                )
+            }
+        }
+
         // 用户通过系统目录选择器授权的本地目录镜像（/local），可在 shell 与文件工具中读写
         if (trimmed == LOCAL_DIR || trimmed.startsWith("$LOCAL_DIR/")) {
             return RootfsLocation(
@@ -277,6 +295,8 @@ class WorkspaceManager(
 
         // Android 本地互通关闭时, 不再把 /skills、/tool_outputs、/upload、/sdcard 等挂进 Rootfs
         val effectiveBindMounts = if (includeAndroidLocal) bindMounts else emptyList()
+        // /sdcard 部分挂载时, 把 rootfs 内的 /sdcard 占位目录设为只读+告示, 防 shell 静默误写
+        enforceSdcardFallbackGuard(linuxDir(root), extraBindMounts)
         return shellRunner.execute(
             WorkspaceShellContext(
                 root = root,

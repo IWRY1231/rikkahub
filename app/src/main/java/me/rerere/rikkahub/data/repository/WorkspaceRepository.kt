@@ -324,6 +324,10 @@ class WorkspaceRepository(
         manager.exportFile(workspace.root, path, area, outputStream)
     }
 
+    /** 工作区的 /sdcard 直连挂载（受本地互通总开关控制 + 子目录配置）; 关闭时返回 null */
+    private fun sdcardBind(workspace: WorkspaceEntity): WorkspaceBindMount? =
+        if (workspace.androidLocalAccess) WorkspaceMounts.sdcardMount(workspace.sdcardSubPath) else null
+
     /** 按 Rootfs 内绝对路径读取文件大小, 支持 /workspace、bind mount、/local 与 Rootfs 内部路径 */
     suspend fun rootfsFileSize(
         id: String,
@@ -334,7 +338,7 @@ class WorkspaceRepository(
         syncLocalMirrorBefore(workspace, path)
         manager.rootfsFileSize(
             workspace.root, path, workspace.androidLocalAccess,
-            extraBindMounts = listOfNotNull(WorkspaceMounts.sdcardMount(workspace.sdcardSubPath)),
+            extraBindMounts = listOfNotNull(sdcardBind(workspace)),
         )
     }
 
@@ -349,7 +353,7 @@ class WorkspaceRepository(
         syncLocalMirrorBefore(workspace, path)
         manager.exportRootfsFile(
             workspace.root, path, outputStream, workspace.androidLocalAccess,
-            extraBindMounts = listOfNotNull(WorkspaceMounts.sdcardMount(workspace.sdcardSubPath)),
+            extraBindMounts = listOfNotNull(sdcardBind(workspace)),
         )
     }
 
@@ -368,7 +372,7 @@ class WorkspaceRepository(
         val treeUri = syncLocalMirrorBefore(workspace, path)
         val result = manager.writeRootfsText(
             workspace.root, path, text, overwrite, workspace.androidLocalAccess,
-            extraBindMounts = listOfNotNull(WorkspaceMounts.sdcardMount(workspace.sdcardSubPath)),
+            extraBindMounts = listOfNotNull(sdcardBind(workspace)),
         )
         syncLocalMirrorAfter(workspace, treeUri)
         result
@@ -424,8 +428,8 @@ class WorkspaceRepository(
             if (localUri != null) {
                 add(WorkspaceBindMount(source = manager.localDir(workspace.root), target = localDir))
             }
-            // 用户配置的 /sdcard 挂载子目录（直连, 无需镜像同步）
-            WorkspaceMounts.sdcardMount(workspace.sdcardSubPath)?.let { add(it) }
+            // 用户配置的 /sdcard 挂载子目录（直连, 无需镜像同步; 受本地互通总开关控制）
+            sdcardBind(workspace)?.let { add(it) }
         }
         // runInterruptible 让协程取消转化为线程中断，从而打断阻塞的 Process.waitFor 并杀掉进程
         val result = runInterruptible(Dispatchers.IO) {

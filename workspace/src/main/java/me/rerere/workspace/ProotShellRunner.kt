@@ -16,6 +16,37 @@ fun buildBindMountArgs(bindMounts: List<WorkspaceBindMount>): List<String> =
     bindMounts.filter { it.source.exists() }
         .flatMap { listOf("-b", "${it.source.absolutePath}:${it.target.trimEnd('/')}") }
 
+/**
+ * /sdcard 部分挂载模式下的沙盒占位防护。
+ *
+ * 仅挂载 /sdcard 的某个子目录时, 容器内 /sdcard 的其他路径会回落到 rootfs 的同名占位
+ * 目录(proot 自动创建), 对其读写会静默成功但永远到不了手机。这里把占位目录设为只读
+ * (r-x) 并写入告示文件, 使 shell 层的误写入立即报 EACCES, 且 ls 即可看到警告。
+ *
+ * - [extraBindMounts] 含 "/sdcard/xxx" 子目录挂载 → 启用防护(只读+告示);
+ * - 不含(整盘挂载或本地互通关闭) → 恢复可写, 不干预。
+ */
+fun enforceSdcardFallbackGuard(linuxDir: File, extraBindMounts: List<WorkspaceBindMount>) {
+    val sdcardRoot = File(linuxDir, "sdcard")
+    val subMount = extraBindMounts.firstOrNull { it.target.trimEnd('/').startsWith("/sdcard/") }
+    if (subMount == null) {
+        // 整盘挂载/未启用: 占位目录即使存在也不影响(bind 完全覆盖), 恢复默认权限
+        if (sdcardRoot.isDirectory) runCatching { sdcardRoot.setWritable(true, false) }
+        return
+    }
+    runCatching {
+        if (!sdcardRoot.exists()) sdcardRoot.mkdirs()
+        val notice = File(sdcardRoot, "MOUNT_NOTICE.txt")
+        val expected = "此目录是工作区沙盒占位, 不是手机存储!\n" +
+            "当前仅挂载了: ${subMount.target}\n" +
+            "对 /sdcard 下其他路径的写入不会出现在手机上(会被拒绝)。\n" +
+            "请只使用 ${subMount.target} 。\n" +
+            "This is a sandbox placeholder, NOT the phone storage. Only ${subMount.target} is mounted.\n"
+        if (!notice.isFile || notice.readText() != expected) notice.writeText(expected)
+        sdcardRoot.setWritable(false, false)
+    }
+}
+
 class ProotShellRunner(
     private val nativeLibraryDir: File,
     private val patcher: RootfsPatcher = RootfsPatcher(),

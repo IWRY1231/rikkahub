@@ -134,6 +134,54 @@ class RootfsPathResolutionTest {
     }
 
     @Test
+    fun sdcardOutsideSubMountIsRejectedLoudly() {
+        val sdcardDir = tempFolder.newFolder("fake-sdcard")
+        File(sdcardDir, "Download").mkdirs()
+        val manager = WorkspaceManager(
+            baseDir = tempFolder.newFolder("workspaces"),
+            bindMounts = emptyList(),
+        ).also { it.ensureWorkspace(root) }
+
+        val mounts = listOf(WorkspaceBindMount(source = File(sdcardDir, "Download"), target = "/sdcard/Download"))
+
+        // 挂载范围内正常解析
+        assertEquals(
+            File(sdcardDir, "Download/a.txt"),
+            manager.resolveRootfsPath(root, "/sdcard/Download/a.txt", extraBindMounts = mounts).rootDir,
+        )
+        // 挂载范围外: 显式报错而不是静默落进沙盒占位目录
+        val error = assertThrows(IllegalStateException::class.java) {
+            manager.resolveRootfsPath(root, "/sdcard/DCIM/x.jpg", extraBindMounts = mounts)
+        }
+        assertTrue(error.message!!.contains("部分挂载"))
+
+        // 完全未挂载 /sdcard 时同样显式报错
+        val error2 = assertThrows(IllegalStateException::class.java) {
+            manager.resolveRootfsPath(root, "/sdcard/DCIM/x.jpg")
+        }
+        assertTrue(error2.message!!.contains("/sdcard"))
+    }
+
+    @Test
+    fun sdcardFallbackGuardMakesRootfsPlaceholderReadOnly() {
+        val linuxDir = tempFolder.newFolder("linux")
+        val sdcardDir = File(linuxDir, "sdcard")
+
+        // 子目录挂载: 占位目录只读 + 告示文件
+        val mounts = listOf(
+            WorkspaceBindMount(source = File(sdcardDir, "Download"), target = "/sdcard/Download"),
+        )
+        enforceSdcardFallbackGuard(linuxDir, mounts)
+        assertTrue(sdcardDir.isDirectory)
+        assertTrue(File(sdcardDir, "MOUNT_NOTICE.txt").isFile)
+        assertTrue(!sdcardDir.canWrite())
+
+        // 整盘/未启用: 恢复可写
+        enforceSdcardFallbackGuard(linuxDir, emptyList())
+        assertTrue(sdcardDir.canWrite())
+    }
+
+    @Test
     fun unknownAbsolutePathFallsBackToRootfsInterior() {
         manager = createManager()
         File(manager.linuxDir(root), "etc").mkdirs()
