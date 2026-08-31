@@ -20,8 +20,10 @@ fun buildBindMountArgs(bindMounts: List<WorkspaceBindMount>): List<String> =
  * 确保 rootfs 内 /sdcard 占位目录存在且可写——proot 启动时需要在该目录下定位/创建
  * 绑定目标(如 /sdcard/Download/Agent), 因此它必须保持为可写目录。
  *
- * 部分挂载模式下额外写入 MOUNT_NOTICE.txt, 供 `ls /sdcard` 时识别占位身份;
- * 对范围外路径的硬拦截由 shell 包装层完成(见 [buildShellWrapper])。
+ * 部分挂载模式下额外写入 MOUNT_NOTICE.txt, 供 `ls /sdcard` 时识别占位身份。
+ * 注意: proot --root-id 的伪 root 会使权限位失效(实测 chmod 555 无法阻止写入),
+ * 因此范围外的硬拦截不在文件系统层, 而在 shell 命令文本层
+ * (见 [ensureShellCommandSdcardScope])。
  */
 fun ensureSdcardPlaceholderDir(linuxDir: File, partialSdcardMount: Boolean) {
     runCatching {
@@ -32,7 +34,7 @@ fun ensureSdcardPlaceholderDir(linuxDir: File, partialSdcardMount: Boolean) {
         val notice = File(dir, "MOUNT_NOTICE.txt")
         if (partialSdcardMount) {
             val text = "此目录是工作区沙盒占位, 不是手机存储!\n" +
-                "当前仅挂载了: /sdcard 下的用户指定子目录, 范围外路径的读写会被拒绝(Permission denied)。\n" +
+                "当前仅挂载了: /sdcard 下的用户指定子目录, 范围外路径的读写会被拒绝。\n" +
                 "This is a sandbox placeholder; only the user-selected subdirectory of /sdcard is mounted.\n"
             if (!notice.isFile || notice.readText() != text) notice.writeText(text)
         } else {
@@ -42,20 +44,54 @@ fun ensureSdcardPlaceholderDir(linuxDir: File, partialSdcardMount: Boolean) {
 }
 
 /**
- * 生成 AI 命令的 shell 包装串。
+ * /sdcard 部分挂载模式下, 对即将执行的 shell 命令做路径范围检查(确定性的入口拦截):
+ * 命令文本中出现的 /sdcard 引用只允许恰好是 [allowedTarget] 及其子路径
+ * (裸 /sdcard 允许——那是带 MOUNT_NOTICE 的占位视图, ls 可见)。
  *
- * [sdcardPartialGuard] 为 true(/sdcard 部分挂载)时, 在用户命令执行前后分别把容器内
- * /sdcard 切为只读/恢复: proot 已在启动阶段完成绑定定位, 执行期 /sdcard 变只读不会
- * 影响已绑定子目录的读写(它们经路径翻译直连真实路径), 但会让范围外的任何
- * 创建/写入立即得到 Permission denied, 从根上杜绝"静默写进沙盒占位目录"。
+ * 处理细节:
+ * - 前一个字符须为分隔符, 避免 /usr/share/sdcard-doc 之类误伤;
+ * - 命令中出现的 .. 段会先做规范化, /sdcard/../etc 一样被拒绝;
+ * - 兄弟前缀(如挂载 /sdcard/Download/Agent 时引用 /sdcard/Download)同样拒绝。
+ *
+ * 已知局限: cd + 相对路径、变量间接引用等写法无法从文本层完全覆盖,
+ * 该检查与提示词警告、占位告示共同构成纵深防御; 文件工具则是完全确定性的。
  */
-internal fun buildShellWrapper(sdcardPartialGuard: Boolean): String =
-    if (sdcardPartialGuard) {
-        "set -f && cd -- \"\$1\" && chmod 555 /sdcard 2>/dev/null; eval \"\$2\"; rc=\$?; " +
-            "chmod 755 /sdcard 2>/dev/null; exit \$rc"
-    } else {
-        "set -f && cd -- \"\$1\" && eval \"\$2\""
+fun ensureShellCommandSdcardScope(command: String, allowedTarget: String) {
+    val allowed = allowedTarget.trimEnd('/')
+    var idx = command.indexOf("/sdcard")
+    while (idx >= 0) {
+        val prev = if (idx == 0) ' ' else command[idx - 1]
+        val prevIsDelimiter = !prev.isLetterOrDigit() && prev !in setOf('_')
+        if (prevIsDelimiter) {
+            var end = idx + "/sdcard".length
+            while (end < command.length && (command[end].isLetterOrDigit() || command[end] in "/._-+={}\$@%")) end++
+            val token = command.substring(idx, end).trimEnd(',', ';', ':', '!', '?')
+            if (token == "/sdcard" || token.startsWith("/sdcard/")) {
+                val normalized = normalizeSdcardPath(token)
+                if (normalized != "/sdcard" && normalized != allowed && !normalized.startsWith("$allowed/")) {
+                    error(
+                        "shell 命令引用了未挂载的路径 \"$token\"(部分挂载模式, 仅 $allowed 可用); " +
+                            "已拒绝执行。请只在 $allowed 内操作。"
+                    )
+                }
+            }
+        }
+        idx = command.indexOf("/sdcard", idx + 1)
     }
+}
+
+/** 规范化路径: 过滤空段与 ".", 弹出 ".."(弹出空则视为根) */
+private fun normalizeSdcardPath(token: String): String {
+    val out = ArrayDeque<String>()
+    for (seg in token.split('/')) {
+        when (seg) {
+            "", "." -> {}
+            ".." -> out.removeLastOrNull()
+            else -> out.addLast(seg)
+        }
+    }
+    return "/" + out.joinToString("/")
+}
 
 class ProotShellRunner(
     private val nativeLibraryDir: File,
@@ -145,8 +181,7 @@ class ProotShellRunner(
             "-l",
             "-c",
             // 命令通过位置参数传入, 避免任何转义; eval "$2" 对命令文本只求值一次, 等价于 bash -c "$cmd"
-            // /sdcard 部分挂载时由包装器在命令前后切换 /sdcard 只读(硬拦截范围外写入)
-            buildShellWrapper(context.sdcardPartialGuard),
+            "cd -- \"\$1\" && eval \"\$2\"",
             "rikkahub",
             context.prootCwd(),
             context.command,

@@ -170,10 +170,8 @@ class RootfsPathResolutionTest {
         // 部分挂载: 占位目录存在、可写(proot 绑定定位需要), 并带有 MOUNT_NOTICE 告示
         ensureSdcardPlaceholderDir(linuxDir, partialSdcardMount = true)
         assertTrue(sdcardDir.isDirectory)
-        assertTrue(sdcardDir.canWrite())
         val notice = File(sdcardDir, "MOUNT_NOTICE.txt")
         assertTrue(notice.isFile)
-        assertTrue(notice.readText().contains("Permission denied"))
 
         // 整盘/未启用: 告示移除
         ensureSdcardPlaceholderDir(linuxDir, partialSdcardMount = false)
@@ -182,17 +180,33 @@ class RootfsPathResolutionTest {
     }
 
     @Test
-    fun shellWrapperAddsSdcardReadOnlyGuardOnlyInPartialMode() {
-        val plain = buildShellWrapper(sdcardPartialGuard = false)
-        assertTrue(plain.contains("eval") && !plain.contains("chmod"))
-
-        val guarded = buildShellWrapper(sdcardPartialGuard = true)
-        assertTrue(guarded.contains("chmod 555 /sdcard"))
-        assertTrue(guarded.contains("eval"))
-        // 命令执行后必须恢复可写, 保证下一次 proot 绑定定位正常
-        assertTrue(guarded.contains("chmod 755 /sdcard"))
-        assertTrue(guarded.indexOf("chmod 555") < guarded.indexOf("eval"))
-        assertTrue(guarded.indexOf("eval") < guarded.indexOf("chmod 755"))
+    fun shellCommandSdcardScopeCheck() {
+        val allowed = "/sdcard/Download/Agent"
+        // ---- 允许: 裸 /sdcard(占位视图) 与 allowedTarget 及其子路径 ----
+        ensureShellCommandSdcardScope("ls /sdcard", allowed)
+        ensureShellCommandSdcardScope("cd /sdcard && ls -la", allowed)
+        ensureShellCommandSdcardScope("touch /sdcard/Download/Agent/a.txt", allowed)
+        ensureShellCommandSdcardScope("cat '/sdcard/Download/Agent/x'", allowed)
+        ensureShellCommandSdcardScope("tar -cf out.tar /sdcard/Download/Agent", allowed)
+        // 非挂载语义的路径(非 /sdcard 引用)不受影响
+        ensureShellCommandSdcardScope("cat /usr/share/sdcard-doc", allowed)
+        ensureShellCommandSdcardScope("ls /workspace", allowed)
+        // ---- 拒绝: 范围外 / 兄弟前缀 / 穿越 ----
+        assertThrows(IllegalStateException::class.java) {
+            ensureShellCommandSdcardScope("echo hi > /sdcard/DCIM/a.txt", allowed)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            ensureShellCommandSdcardScope("mkdir -p /sdcard/DCIM", allowed)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            ensureShellCommandSdcardScope("echo x > '/sdcard/Download'", allowed)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            ensureShellCommandSdcardScope("rm -rf /sdcard/../etc", allowed)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            ensureShellCommandSdcardScope("cp /workspace/a /sdcard/Pictures/b", allowed)
+        }
     }
 
     @Test

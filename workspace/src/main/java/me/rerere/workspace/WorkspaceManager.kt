@@ -296,8 +296,14 @@ class WorkspaceManager(
         // Android 本地互通关闭时, 不再把 /skills、/tool_outputs、/upload、/sdcard 等挂进 Rootfs
         val effectiveBindMounts = if (includeAndroidLocal) bindMounts else emptyList()
         // 确保 rootfs 内 /sdcard 占位目录可写(proot 绑定定位需要); 部分挂载时写入告示
-        val partialSdcard = extraBindMounts.any { it.target.trimEnd('/').startsWith("/sdcard/") }
-        ensureSdcardPlaceholderDir(linuxDir(root), partialSdcard)
+        val sdcardTarget = extraBindMounts
+            .firstOrNull { it.target.trimEnd('/').startsWith("/sdcard/") }
+            ?.target?.trimEnd('/')
+        if (sdcardTarget != null) {
+            // /sdcard 部分挂载: shell 命令文本层的确定性范围拦截(权限位在伪 root 下无效)
+            ensureShellCommandSdcardScope(command, sdcardTarget)
+        }
+        ensureSdcardPlaceholderDir(linuxDir(root), partialSdcardMount = sdcardTarget != null)
         return shellRunner.execute(
             WorkspaceShellContext(
                 root = root,
@@ -311,7 +317,6 @@ class WorkspaceManager(
                 stdin = stdin,
                 bindMounts = effectiveBindMounts,
                 extraBindMounts = extraBindMounts,
-                sdcardPartialGuard = partialSdcard,
             )
         )
     }
