@@ -693,13 +693,17 @@ fun ChatDrawerContent(
 
 @Composable
 private fun DrawerActions(navController: Navigator) {
-    Column {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         // 搜索入口
         Surface(
             onClick = { navController.navigate(Screen.MessageSearch) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp),
+            modifier = Modifier.weight(1f),
             shape = MaterialTheme.shapes.medium,
             color = MaterialTheme.colorScheme.surfaceContainerLow,
         ) {
@@ -720,6 +724,8 @@ private fun DrawerActions(navController: Navigator) {
                     text = stringResource(R.string.chat_page_search_chats),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -727,9 +733,7 @@ private fun DrawerActions(navController: Navigator) {
         // 历史记录入口
         Surface(
             onClick = { navController.navigate(Screen.History) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp),
+            modifier = Modifier.weight(1f),
             shape = MaterialTheme.shapes.medium,
             color = MaterialTheme.colorScheme.surfaceContainerLow,
         ) {
@@ -750,6 +754,8 @@ private fun DrawerActions(navController: Navigator) {
                     text = stringResource(R.string.chat_page_history),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
