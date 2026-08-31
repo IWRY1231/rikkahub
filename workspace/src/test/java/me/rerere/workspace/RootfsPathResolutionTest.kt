@@ -163,22 +163,21 @@ class RootfsPathResolutionTest {
     }
 
     @Test
-    fun sdcardFallbackGuardMakesRootfsPlaceholderReadOnly() {
+    fun sdcardFallbackGuardReplacesPlaceholderWithNoticeFile() {
         val linuxDir = tempFolder.newFolder("linux")
-        val sdcardDir = File(linuxDir, "sdcard")
+        val sdcardPath = File(linuxDir, "sdcard")
 
-        // 子目录挂载: 占位目录只读 + 告示文件
+        // 子目录挂载: 占位目录被替换为同名告示文件(内核 ENOTDIR 防护, 对伪 root 同样生效)
         val mounts = listOf(
-            WorkspaceBindMount(source = File(sdcardDir, "Download"), target = "/sdcard/Download"),
+            WorkspaceBindMount(source = File(sdcardPath, "Download"), target = "/sdcard/Download"),
         )
         enforceSdcardFallbackGuard(linuxDir, mounts)
-        assertTrue(sdcardDir.isDirectory)
-        assertTrue(File(sdcardDir, "MOUNT_NOTICE.txt").isFile)
-        assertTrue(!sdcardDir.canWrite())
+        assertTrue(sdcardPath.isFile)
+        assertTrue(sdcardPath.readText().contains("/sdcard/Download"))
 
-        // 整盘/未启用: 恢复可写
+        // 整盘/未启用: 恢复为目录布局
         enforceSdcardFallbackGuard(linuxDir, emptyList())
-        assertTrue(sdcardDir.canWrite())
+        assertTrue(sdcardPath.isDirectory)
     }
 
     @Test
