@@ -304,7 +304,7 @@ class WorkspaceManager(
             ensureShellCommandSdcardScope(command, sdcardTarget)
         }
         ensureSdcardPlaceholderDir(linuxDir(root), partialSdcardMount = sdcardTarget != null)
-        return shellRunner.execute(
+        val result = shellRunner.execute(
             WorkspaceShellContext(
                 root = root,
                 command = command,
@@ -319,6 +319,17 @@ class WorkspaceManager(
                 extraBindMounts = extraBindMounts,
             )
         )
+        // 事后兜底: 清理穿越进占位目录的文件, 并把清理结果回告 AI(静默失效 -> 显式反馈)
+        if (sdcardTarget != null) {
+            val leaked = cleanupSdcardPlaceholder(linuxDir(root), sdcardTarget)
+            if (leaked.isNotEmpty()) {
+                val warning = leaked.joinToString("\n") {
+                    "[工作区] 已清理写入到未挂载占位目录的文件: $it (它不会出现在手机上; 手机文件夹请使用 $sdcardTarget)"
+                }
+                result = result.copy(stderr = result.stderr.trimEnd('\n') + "\n" + warning + "\n")
+            }
+        }
+        return result
     }
 
     private fun requireValidRoot(root: String) {

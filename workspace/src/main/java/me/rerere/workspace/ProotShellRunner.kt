@@ -17,6 +17,37 @@ fun buildBindMountArgs(bindMounts: List<WorkspaceBindMount>): List<String> =
         .flatMap { listOf("-b", "${it.source.absolutePath}:${it.target.trimEnd('/')}") }
 
 /**
+ * 命令执行后的兜底清理: 扫描 rootfs 内 /sdcard 占位树, 把"穿越进占位目录"的文件
+ * (cd 后相对路径写入、绕过文本检查的间接写法等)删除, 并返回其容器内路径清单。
+ * 白名单: MOUNT_NOTICE.txt 与挂载目标路径本身(proot 绑定定位所建)。
+ * 这些文件本来就到不了手机, 清理只是让"静默失效"变成"显式反馈"。
+ */
+internal fun cleanupSdcardPlaceholder(linuxDir: File, sdcardTarget: String): List<String> {
+    val root = File(linuxDir, "sdcard")
+    if (!root.isDirectory) return emptyList()
+    val allowedSegments = sdcardTarget.trim('/').split('/').filter { it.isNotBlank() }
+    val leaked = mutableListOf<String>()
+    fun scan(dir: File, depth: Int, guestPrefix: String) {
+        dir.listFiles()?.forEach { child ->
+            val guestPath = "$guestPrefix/${child.name}"
+            val allowedHere = depth < allowedSegments.size &&
+                child.name == allowedSegments[depth] &&
+                child.isDirectory
+            when {
+                child.isFile && child.name == "MOUNT_NOTICE.txt" -> Unit // 告示
+                allowedHere -> scan(child, depth + 1, guestPath)
+                else -> {
+                    leaked.add(if (child.isDirectory) "$guestPath/" else guestPath)
+                    child.deleteRecursively()
+                }
+            }
+        }
+    }
+    scan(root, 0, "/sdcard")
+    return leaked
+}
+
+/**
  * 确保 rootfs 内 /sdcard 占位目录存在且可写——proot 启动时需要在该目录下定位/创建
  * 绑定目标(如 /sdcard/Download/Agent), 因此它必须保持为可写目录。
  *

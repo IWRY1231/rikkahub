@@ -210,6 +210,28 @@ class RootfsPathResolutionTest {
     }
 
     @Test
+    fun cleanupSdcardPlaceholderRemovesOutOfScopeFiles() {
+        val linuxDir = tempFolder.newFolder("linux")
+        val sdcard = File(linuxDir, "sdcard")
+        File(sdcard, "MOUNT_NOTICE.txt").writeText("notice")
+        File(sdcard, "Download/Agent").mkdirs()
+        File(sdcard, "DCIM").mkdirs()
+        File(sdcard, "DCIM/a.txt").writeText("leak")
+        File(sdcard, "stray.txt").writeText("stray")
+        File(sdcard, "Download/outside.txt").writeText("outside")
+
+        val leaked = cleanupSdcardPlaceholder(linuxDir, "/sdcard/Download/Agent")
+        assertTrue(leaked.any { it == "/sdcard/DCIM/" })
+        assertTrue(leaked.any { it == "/sdcard/stray.txt" })
+        assertTrue(leaked.any { it == "/sdcard/Download/outside.txt" })
+        assertTrue(!File(sdcard, "DCIM").exists())
+        assertTrue(!File(sdcard, "stray.txt").exists())
+        assertTrue(!File(sdcard, "Download/outside.txt").exists())
+        assertTrue(File(sdcard, "MOUNT_NOTICE.txt").isFile)
+        assertTrue(File(sdcard, "Download/Agent").isDirectory)
+    }
+
+    @Test
     fun unknownAbsolutePathFallsBackToRootfsInterior() {
         manager = createManager()
         File(manager.linuxDir(root), "etc").mkdirs()
