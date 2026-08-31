@@ -317,6 +317,7 @@ class WorkspaceManager(
                 stdin = stdin,
                 bindMounts = effectiveBindMounts,
                 extraBindMounts = extraBindMounts,
+                sdcardMountTarget = sdcardTarget,
             )
         )
         // 事后兜底: 清理穿越进占位目录的文件, 并把清理结果回告 AI(静默失效 -> 显式反馈)
@@ -324,7 +325,8 @@ class WorkspaceManager(
             val leaked = cleanupSdcardPlaceholder(linuxDir(root), sdcardTarget)
             if (leaked.isNotEmpty()) {
                 val warning = leaked.joinToString("\n") {
-                    "[工作区] 已清理写入到未挂载占位目录的文件: $it (它不会出现在手机上; 手机文件夹请使用 $sdcardTarget)"
+                    "[工作区] 已清理写入到未挂载占位目录的文件: $it (它不会出现在手机上; 手机文件夹请使用 $sdcardTarget)。" +
+                        "注意: 若该操作是从挂载目录 mv/cp 出来的, 原件已随本次清理删除且不可恢复——请直接在 $sdcardTarget 内操作"
                 }
                 result = result.copy(stderr = result.stderr.trimEnd('\n') + "\n" + warning + "\n")
             }

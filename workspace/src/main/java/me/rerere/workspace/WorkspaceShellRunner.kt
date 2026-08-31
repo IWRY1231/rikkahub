@@ -22,6 +22,8 @@ data class WorkspaceShellContext(
     val bindMounts: List<WorkspaceBindMount> = emptyList(),
     /** 追加在默认挂载表之后的临时挂载(如按需挂载的 /local 镜像) */
     val extraBindMounts: List<WorkspaceBindMount> = emptyList(),
+    /** /sdcard 部分挂载的目标(如 /sdcard/Download/Agent); null = 未启用或整盘 */
+    val sdcardMountTarget: String? = null,
 )
 
 class HostShellRunner : WorkspaceShellRunner {

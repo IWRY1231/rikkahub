@@ -207,6 +207,25 @@ class RootfsPathResolutionTest {
         assertThrows(IllegalStateException::class.java) {
             ensureShellCommandSdcardScope("cp /workspace/a /sdcard/Pictures/b", allowed)
         }
+        // 经过挂载目标再穿出: 规范化后虽是裸 /sdcard, 仍属逃逸, 必须拒绝
+        assertThrows(IllegalStateException::class.java) {
+            ensureShellCommandSdcardScope("ls /sdcard/Download/Agent/../..", allowed)
+        }
+    }
+
+    @Test
+    fun shellWrapperAddsCwdNoticeOnlyInPartialMode() {
+        val allowed = "/sdcard/Download/Agent"
+        val plain = buildShellWrapper(partialSdcardMount = false, allowedTarget = allowed)
+        assertTrue(!plain.contains("pwd"))
+        assertTrue(plain.contains("eval"))
+
+        val guarded = buildShellWrapper(partialSdcardMount = true, allowedTarget = allowed)
+        assertTrue(guarded.contains("pwd -P"))
+        assertTrue(guarded.contains(allowed))
+        // 已挂载子树内不告警(排除分支), 退出码透传
+        assertTrue(guarded.contains("exit \$rc"))
+        assertTrue(guarded.indexOf("eval") < guarded.indexOf("pwd -P"))
     }
 
     @Test

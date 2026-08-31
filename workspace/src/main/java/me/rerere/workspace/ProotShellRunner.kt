@@ -17,6 +17,25 @@ fun buildBindMountArgs(bindMounts: List<WorkspaceBindMount>): List<String> =
         .flatMap { listOf("-b", "${it.source.absolutePath}:${it.target.trimEnd('/')}") }
 
 /**
+ * 生成 AI 命令的 shell 包装串。
+ *
+ * [partialSdcardMount] 为 true(/sdcard 部分挂载)时:
+ * - 命令结束后取物理 pwd, 若落在 /sdcard 占位子树(且不在已挂载目标内),
+ *   向 stderr 注入警告——防止 `cd .. && ls` 之类只读穿越让 AI 误以为看到的是手机内容;
+ * - rc 全程透传, 不影响命令退出码。
+ */
+internal fun buildShellWrapper(partialSdcardMount: Boolean, allowedTarget: String): String {
+    val base = "cd -- \"\$1\" && eval \"\$2\""
+    if (!partialSdcardMount) return base
+    val allowed = allowedTarget.trimEnd('/')
+    return base +
+        "; rc=\$?; __p=\$(pwd -P 2>/dev/null || pwd); " +
+        "case \"\$__p\" in \"$allowed\"|\"$allowed\"/*) : ;; " +
+        "\"/sdcard\"|\"/sdcard\"/*) printf '%s\\n' \"[工作区] 警告: 当前目录 \$__p 是沙盒占位而非手机存储, 其内容不代表手机真实文件; 手机文件夹请使用 $allowed\" >&2 ;; " +
+        "esac; exit \$rc"
+}
+
+/**
  * 命令执行后的兜底清理: 扫描 rootfs 内 /sdcard 占位树, 把"穿越进占位目录"的文件
  * (cd 后相对路径写入、绕过文本检查的间接写法等)删除, 并返回其容器内路径清单。
  * 白名单: MOUNT_NOTICE.txt 与挂载目标路径本身(proot 绑定定位所建)。
@@ -99,7 +118,9 @@ fun ensureShellCommandSdcardScope(command: String, allowedTarget: String) {
             val token = command.substring(idx, end).trimEnd(',', ';', ':', '!', '?')
             if (token == "/sdcard" || token.startsWith("/sdcard/")) {
                 val normalized = normalizeSdcardPath(token)
-                if (normalized != "/sdcard" && normalized != allowed && !normalized.startsWith("$allowed/")) {
+                val passesThroughAllowed = token == allowed || token.startsWith("$allowed/")
+                val withinAllowed = normalized == allowed || normalized.startsWith("$allowed/")
+                if (!withinAllowed && !(normalized == "/sdcard" && !passesThroughAllowed)) {
                     error(
                         "shell 命令引用了未挂载的路径 \"$token\"(部分挂载模式, 仅 $allowed 可用); " +
                             "已拒绝执行。请只在 $allowed 内操作。"
@@ -212,7 +233,11 @@ class ProotShellRunner(
             "-l",
             "-c",
             // 命令通过位置参数传入, 避免任何转义; eval "$2" 对命令文本只求值一次, 等价于 bash -c "$cmd"
-            "cd -- \"\$1\" && eval \"\$2\"",
+            // /sdcard 部分挂载时, 包装器在命令结束后检查 pwd 并对占位子树注入警告
+            buildShellWrapper(
+                partialSdcardMount = context.sdcardMountTarget != null,
+                allowedTarget = context.sdcardMountTarget ?: "/sdcard",
+            ),
             "rikkahub",
             context.prootCwd(),
             context.command,
