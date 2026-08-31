@@ -22,6 +22,8 @@ data class WorkspaceShellContext(
     val bindMounts: List<WorkspaceBindMount> = emptyList(),
     /** 追加在默认挂载表之后的临时挂载(如按需挂载的 /local 镜像) */
     val extraBindMounts: List<WorkspaceBindMount> = emptyList(),
+    /** /sdcard 部分挂载时, shell 包装器在命令前后切换 /sdcard 只读(硬拦截范围外写入) */
+    val sdcardPartialGuard: Boolean = false,
 )
 
 class HostShellRunner : WorkspaceShellRunner {

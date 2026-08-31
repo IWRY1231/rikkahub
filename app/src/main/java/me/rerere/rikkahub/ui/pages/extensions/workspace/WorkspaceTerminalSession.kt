@@ -22,7 +22,7 @@ import me.rerere.workspace.RootfsPatcher
 import me.rerere.workspace.WorkspaceBindMount
 import me.rerere.workspace.WorkspaceManager
 import me.rerere.workspace.buildBindMountArgs
-import me.rerere.workspace.enforceSdcardFallbackGuard
+import me.rerere.workspace.ensureSdcardPlaceholderDir
 import java.io.File
 
 internal fun createWorkspaceTerminalSession(
@@ -120,11 +120,11 @@ internal suspend fun prepareWorkspaceTerminalSession(
         linuxDir,
         RootfsPatchOptions(nameservers = appContext.activeDnsServers())
     )
-    // /sdcard 部分挂载时同样启用沙盒占位防护(只读+告示), 与 AI 命令执行行为一致
+    // /sdcard 部分挂载时写入 MOUNT_NOTICE 告示(交互式终端为软提示; AI 命令走硬拦截包装器)
     if (androidLocalAccess) {
-        enforceSdcardFallbackGuard(
+        ensureSdcardPlaceholderDir(
             linuxDir,
-            listOfNotNull(WorkspaceMounts.sdcardMount(sdcardSubPath)),
+            partialSdcardMount = !sdcardSubPath.isNullOrBlank(),
         )
     }
     val mirror = localDirMirror(appContext, root, localDirectoryUri)

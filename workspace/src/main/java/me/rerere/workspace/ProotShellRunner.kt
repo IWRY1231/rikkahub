@@ -17,38 +17,45 @@ fun buildBindMountArgs(bindMounts: List<WorkspaceBindMount>): List<String> =
         .flatMap { listOf("-b", "${it.source.absolutePath}:${it.target.trimEnd('/')}") }
 
 /**
- * /sdcard 部分挂载模式下的沙盒占位防护。
+ * 确保 rootfs 内 /sdcard 占位目录存在且可写——proot 启动时需要在该目录下定位/创建
+ * 绑定目标(如 /sdcard/Download/Agent), 因此它必须保持为可写目录。
  *
- * 仅挂载 /sdcard 的某个子目录时, 容器内 /sdcard 的其他路径会回落到 rootfs 的同名占位
- * 目录(proot 自动创建), 对其读写会静默成功但永远到不了手机。注意 proot --root-id 的
- * 伪 root 会让 chmod 只读失效(实测 mkdir 照样成功), 因此这里直接把占位"目录"替换为
- * 同名"普通文件"(内容即告示): 内核层 ENOTDIR 对任何 uid 都无条件生效, 误操作立即
- * 显式报错; `cat /sdcard` 即可看到告示。
- *
- * - [extraBindMounts] 含 "/sdcard/xxx" 子目录挂载 → 启用防护(占位文件);
- * - 不含(整盘挂载或本地互通关闭) → 恢复为普通目录布局(bind 完全覆盖, 不干预)。
+ * 部分挂载模式下额外写入 MOUNT_NOTICE.txt, 供 `ls /sdcard` 时识别占位身份;
+ * 对范围外路径的硬拦截由 shell 包装层完成(见 [buildShellWrapper])。
  */
-fun enforceSdcardFallbackGuard(linuxDir: File, extraBindMounts: List<WorkspaceBindMount>) {
-    val sdcardPath = File(linuxDir, "sdcard")
-    val subMount = extraBindMounts.firstOrNull { it.target.trimEnd('/').startsWith("/sdcard/") }
-    if (subMount == null) {
-        if (sdcardPath.isFile) runCatching {
-            sdcardPath.delete()
-            sdcardPath.mkdirs()
-        }
-        return
-    }
-    val notice = "此文件是工作区沙盒占位, 不是目录, 更不是手机存储!\n" +
-        "当前仅挂载了: ${subMount.target}\n" +
-        "对 /sdcard 下其他路径的一切读写都会直接报错(Not a directory), 文件不会出现在手机上。\n" +
-        "请只使用 ${subMount.target} 。\n" +
-        "This placeholder file means only ${subMount.target} is mounted from the phone; " +
-        "any other path under /sdcard is not accessible.\n"
+fun ensureSdcardPlaceholderDir(linuxDir: File, partialSdcardMount: Boolean) {
     runCatching {
-        if (sdcardPath.isDirectory) sdcardPath.deleteRecursively()
-        if (!sdcardPath.isFile || sdcardPath.readText() != notice) sdcardPath.writeText(notice)
+        val dir = File(linuxDir, "sdcard")
+        if (dir.isFile) dir.delete()
+        if (!dir.isDirectory) dir.mkdirs()
+        dir.setWritable(true, false)
+        val notice = File(dir, "MOUNT_NOTICE.txt")
+        if (partialSdcardMount) {
+            val text = "此目录是工作区沙盒占位, 不是手机存储!\n" +
+                "当前仅挂载了: /sdcard 下的用户指定子目录, 范围外路径的读写会被拒绝(Permission denied)。\n" +
+                "This is a sandbox placeholder; only the user-selected subdirectory of /sdcard is mounted.\n"
+            if (!notice.isFile || notice.readText() != text) notice.writeText(text)
+        } else {
+            if (notice.exists()) notice.delete()
+        }
     }
 }
+
+/**
+ * 生成 AI 命令的 shell 包装串。
+ *
+ * [sdcardPartialGuard] 为 true(/sdcard 部分挂载)时, 在用户命令执行前后分别把容器内
+ * /sdcard 切为只读/恢复: proot 已在启动阶段完成绑定定位, 执行期 /sdcard 变只读不会
+ * 影响已绑定子目录的读写(它们经路径翻译直连真实路径), 但会让范围外的任何
+ * 创建/写入立即得到 Permission denied, 从根上杜绝"静默写进沙盒占位目录"。
+ */
+internal fun buildShellWrapper(sdcardPartialGuard: Boolean): String =
+    if (sdcardPartialGuard) {
+        "set -f && cd -- \"\$1\" && chmod 555 /sdcard 2>/dev/null; eval \"\$2\"; rc=\$?; " +
+            "chmod 755 /sdcard 2>/dev/null; exit \$rc"
+    } else {
+        "set -f && cd -- \"\$1\" && eval \"\$2\""
+    }
 
 class ProotShellRunner(
     private val nativeLibraryDir: File,
@@ -138,7 +145,8 @@ class ProotShellRunner(
             "-l",
             "-c",
             // 命令通过位置参数传入, 避免任何转义; eval "$2" 对命令文本只求值一次, 等价于 bash -c "$cmd"
-            "cd -- \"\$1\" && eval \"\$2\"",
+            // /sdcard 部分挂载时由包装器在命令前后切换 /sdcard 只读(硬拦截范围外写入)
+            buildShellWrapper(context.sdcardPartialGuard),
             "rikkahub",
             context.prootCwd(),
             context.command,

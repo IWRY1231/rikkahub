@@ -295,8 +295,9 @@ class WorkspaceManager(
 
         // Android 本地互通关闭时, 不再把 /skills、/tool_outputs、/upload、/sdcard 等挂进 Rootfs
         val effectiveBindMounts = if (includeAndroidLocal) bindMounts else emptyList()
-        // /sdcard 部分挂载时, 把 rootfs 内的 /sdcard 占位目录设为只读+告示, 防 shell 静默误写
-        enforceSdcardFallbackGuard(linuxDir(root), extraBindMounts)
+        // 确保 rootfs 内 /sdcard 占位目录可写(proot 绑定定位需要); 部分挂载时写入告示
+        val partialSdcard = extraBindMounts.any { it.target.trimEnd('/').startsWith("/sdcard/") }
+        ensureSdcardPlaceholderDir(linuxDir(root), partialSdcard)
         return shellRunner.execute(
             WorkspaceShellContext(
                 root = root,
@@ -310,6 +311,7 @@ class WorkspaceManager(
                 stdin = stdin,
                 bindMounts = effectiveBindMounts,
                 extraBindMounts = extraBindMounts,
+                sdcardPartialGuard = partialSdcard,
             )
         )
     }

@@ -163,21 +163,36 @@ class RootfsPathResolutionTest {
     }
 
     @Test
-    fun sdcardFallbackGuardReplacesPlaceholderWithNoticeFile() {
+    fun sdcardPlaceholderDirGetsNoticeAndStaysWritable() {
         val linuxDir = tempFolder.newFolder("linux")
-        val sdcardPath = File(linuxDir, "sdcard")
+        val sdcardDir = File(linuxDir, "sdcard")
 
-        // 子目录挂载: 占位目录被替换为同名告示文件(内核 ENOTDIR 防护, 对伪 root 同样生效)
-        val mounts = listOf(
-            WorkspaceBindMount(source = File(sdcardPath, "Download"), target = "/sdcard/Download"),
-        )
-        enforceSdcardFallbackGuard(linuxDir, mounts)
-        assertTrue(sdcardPath.isFile)
-        assertTrue(sdcardPath.readText().contains("/sdcard/Download"))
+        // 部分挂载: 占位目录存在、可写(proot 绑定定位需要), 并带有 MOUNT_NOTICE 告示
+        ensureSdcardPlaceholderDir(linuxDir, partialSdcardMount = true)
+        assertTrue(sdcardDir.isDirectory)
+        assertTrue(sdcardDir.canWrite())
+        val notice = File(sdcardDir, "MOUNT_NOTICE.txt")
+        assertTrue(notice.isFile)
+        assertTrue(notice.readText().contains("Permission denied"))
 
-        // 整盘/未启用: 恢复为目录布局
-        enforceSdcardFallbackGuard(linuxDir, emptyList())
-        assertTrue(sdcardPath.isDirectory)
+        // 整盘/未启用: 告示移除
+        ensureSdcardPlaceholderDir(linuxDir, partialSdcardMount = false)
+        assertTrue(sdcardDir.isDirectory)
+        assertTrue(!notice.exists())
+    }
+
+    @Test
+    fun shellWrapperAddsSdcardReadOnlyGuardOnlyInPartialMode() {
+        val plain = buildShellWrapper(sdcardPartialGuard = false)
+        assertTrue(plain.contains("eval") && !plain.contains("chmod"))
+
+        val guarded = buildShellWrapper(sdcardPartialGuard = true)
+        assertTrue(guarded.contains("chmod 555 /sdcard"))
+        assertTrue(guarded.contains("eval"))
+        // 命令执行后必须恢复可写, 保证下一次 proot 绑定定位正常
+        assertTrue(guarded.contains("chmod 755 /sdcard"))
+        assertTrue(guarded.indexOf("chmod 555") < guarded.indexOf("eval"))
+        assertTrue(guarded.indexOf("eval") < guarded.indexOf("chmod 755"))
     }
 
     @Test
