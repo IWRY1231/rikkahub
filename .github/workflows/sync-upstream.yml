@@ -180,6 +180,17 @@ jobs:
           keyPassword=Rikka#Local#2026
           EOF
 
+      - name: Compute version and timestamp
+        if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
+        id: meta
+        run: |
+          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -1)
+          VERSION_CODE=$(grep -oP 'versionCode\s*=\s*\K[0-9]+' app/build.gradle.kts | head -1)
+          TS=$(TZ=Asia/Shanghai date +%Y%m%d-%H%M)
+          echo "version=${VERSION_NAME:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${VERSION_CODE:-0}" >> "$GITHUB_OUTPUT"
+          echo "ts=$TS" >> "$GITHUB_OUTPUT"
+
       - name: Build release APK
         if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
         run: ./gradlew --no-daemon assembleRelease
@@ -188,14 +199,16 @@ jobs:
         if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
         run: |
           mkdir -p dist
-          find app/build/outputs/apk -name "*-release*.apk" -exec cp -v {} dist/ \;
+          APK_FILE=$(find app/build/outputs/apk -name "*-release*.apk" | head -1)
+          if [ -z "$APK_FILE" ]; then echo "::error::未找到 release APK"; exit 1; fi
+          cp -v "$APK_FILE" "dist/RikkaHub-local-v${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.ts }}.apk"
           ls -la dist
 
       - name: Upload artifact
         if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: apk
+          name: RikkaHub-local-v${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.ts }}
           path: dist/*.apk
           if-no-files-found: error
 
@@ -203,10 +216,13 @@ jobs:
         if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "auto-${{ steps.sync.outputs.upstream_head }}"
-          name: "同步上游 ${{ steps.sync.outputs.upstream_head }}"
+          tag_name: "local-v${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.ts }}-r${{ github.run_number }}"
+          name: "RikkaHub 本地构建 v${{ steps.meta.outputs.version }} (${{ steps.meta.outputs.ts }})"
           body: |
-            自动合并 rikkahub/rikkahub@${{ steps.sync.outputs.upstream_head }} 后构建。
-            包含「工作区本地读写 / 本地互通(/local) / 所有文件访问(/sdcard)」功能。
+            基于 rikkahub/rikkahub@${{ steps.sync.outputs.upstream_head }} 自动合并后构建
+            - 版本: v${{ steps.meta.outputs.version }} (versionCode ${{ steps.meta.outputs.version_code }})
+            - 包名: me.iwry.rikkahub (与官方版共存, 数据独立)
+            - 功能: 工作区本地读写(挂载子目录在工作区详情页配置) / SAF 本地目录(/local) / 所有文件访问(/sdcard)
+            - 构建时间: ${{ steps.meta.outputs.ts }} (北京时间)
           files: dist/*.apk
           fail_on_unmatched_files: true
