@@ -413,7 +413,9 @@ class WorkspaceRepository(
         // 仅当命令确实涉及 /local 时才同步本地目录到镜像并挂载 /local，
         // 避免每次执行命令（如开发工具检测）都全量同步 SAF 目录导致卡死
         val localDir = WorkspaceManager.LOCAL_DIR
-        val touchesLocal = command.contains(localDir) || command.contains("$localDir/")
+        // 边界感知匹配, 避免把 /usr/local 之类误判为 /local 引用而触发不必要的全量同步
+        val touchesLocal = Regex("(^|[^A-Za-z0-9._-])${Regex.escape(localDir)}(/|\\b)")
+            .containsMatchIn(command)
         val localUri = if (touchesLocal) {
             try {
                 prepareLocalMirror(workspace)

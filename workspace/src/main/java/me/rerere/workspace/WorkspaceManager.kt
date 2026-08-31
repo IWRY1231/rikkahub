@@ -304,7 +304,7 @@ class WorkspaceManager(
             ensureShellCommandSdcardScope(command, sdcardTarget)
         }
         ensureSdcardPlaceholderDir(linuxDir(root), partialSdcardMount = sdcardTarget != null)
-        val result = shellRunner.execute(
+        var result = shellRunner.execute(
             WorkspaceShellContext(
                 root = root,
                 command = command,
