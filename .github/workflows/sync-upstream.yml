@@ -204,7 +204,7 @@ jobs:
             ABI=$(basename "$f" .apk)
             ABI=${ABI#app-}
             ABI=${ABI%-release}
-            cp -v "$f" "dist/RikkaHub-local-v${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.ts }}-${ABI}.apk"
+            cp -v "$f" "dist/RikkaHub-v${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.ts }}-${ABI}.apk"
           done
           ls -la dist
 
@@ -212,7 +212,7 @@ jobs:
         if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: RikkaHub-local-v${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.ts }}
+          name: RikkaHub-v${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.ts }}
           path: dist/*.apk
           if-no-files-found: error
 
