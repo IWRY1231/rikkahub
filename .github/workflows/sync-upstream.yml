@@ -220,13 +220,9 @@ jobs:
         if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "local-v${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.ts }}-r${{ github.run_number }}"
-          name: "RikkaHub 本地构建 v${{ steps.meta.outputs.version }} (${{ steps.meta.outputs.ts }})"
+          tag_name: "RikkaHub-v${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.ts }}-r${{ github.run_number }}"
+          name: "RikkaHub v${{ steps.meta.outputs.version }} (${{ steps.meta.outputs.ts }})"
           body: |
             基于 rikkahub/rikkahub@${{ steps.sync.outputs.upstream_head }} 自动合并后构建
-            - 版本: v${{ steps.meta.outputs.version }} (versionCode ${{ steps.meta.outputs.version_code }})
-            - 包名: me.iwry.rikkahub (与官方版共存, 数据独立)
-            - 功能: 工作区本地读写(挂载子目录在工作区详情页配置) / SAF 本地目录(/local) / 所有文件访问(/sdcard)
-            - 构建时间: ${{ steps.meta.outputs.ts }} (北京时间)
           files: dist/*.apk
           fail_on_unmatched_files: true
