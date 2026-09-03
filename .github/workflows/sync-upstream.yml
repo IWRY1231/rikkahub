@@ -5,7 +5,8 @@ name: Sync upstream & build
 # 手动触发: Actions -> Sync upstream & build -> Run workflow
 on:
   schedule:
-    - cron: "0 3 * * *"
+    - cron: "0 10 * * *"
+    - cron: "0 22 * * *"
   workflow_dispatch:
 
 permissions:
