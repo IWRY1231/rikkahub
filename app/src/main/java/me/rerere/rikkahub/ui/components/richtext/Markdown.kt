@@ -1082,12 +1082,12 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
             val linkText = node.findChildOfTypeRecursive(MarkdownElementTypes.LINK_TEXT)?.getTextInNode(content)
                 ?.trim { it == '[' || it == ']' } ?: linkDest
             if (linkText.startsWith("citation,")) {
-                // 如果是引用，则特殊处理
-                val domain = linkText.substringAfter("citation,")
-                val id = linkDest
-                if (id.length == 6) {
+                // 引用链接: [citation,domain](真实网址 或 旧版6位id)
+                val domain = linkText.substringAfter("citation,").ifBlank { "source" }
+                val target = linkDest.trim()
+                if (target.isNotEmpty()) {
                     inlineContents.putIfAbsent(
-                        "citation:$linkDest", InlineTextContent(
+                        "citation:$target", InlineTextContent(
                             placeholder = Placeholder(
                                 width = (domain.length * 7).sp,
                                 height = 1.em,
@@ -1096,7 +1096,7 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
                                 Box(
                                     modifier = Modifier
                                         .clickable {
-                                            onClickCitation(id.trim())
+                                            onClickCitation(target)
                                         }
                                         .fillMaxSize()
                                         .clip(CircleShape)
@@ -1116,7 +1116,7 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
                                 }
                             })
                     )
-                    appendInlineContent("citation:$linkDest")
+                    appendInlineContent("citation:$target")
                 }
             } else {
                 withLink(LinkAnnotation.Url(linkDest)) {

@@ -98,6 +98,39 @@ import java.util.Locale
 import kotlin.time.Duration.Companion.milliseconds
 
 @Composable
+private fun rememberCitationClickHandler(parts: List<UIMessagePart>): (String) -> Unit {
+    val context = LocalContext.current
+    val partsState by rememberUpdatedState(parts)
+    return remember {
+        handler@{ citationTarget ->
+            val target = citationTarget.trim()
+            // 新版引用: 链接目标即真实网址, 直接打开(不依赖工具输出反查, 不会失效)
+            if (target.startsWith("http://") || target.startsWith("https://")) {
+                context.openUrl(target)
+                return@handler
+            }
+            // 旧版消息兼容: 目标为 6 位短 id, 从本消息 search_web 工具输出反查真实网址
+            partsState.forEach { part ->
+                if (part is UIMessagePart.Tool && part.toolName == "search_web" && part.isExecuted) {
+                    val outputText = part.output.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text }
+                    val items =
+                        runCatching { JsonInstant.parseToJsonElement(outputText).jsonObject["items"]?.jsonArray }.getOrNull()
+                            ?: return@forEach
+                    items.forEach { item ->
+                        val id = item.jsonObject["id"]?.jsonPrimitive?.content ?: return@forEach
+                        val url = item.jsonObject["url"]?.jsonPrimitive?.content ?: return@forEach
+                        if (target == id) {
+                            context.openUrl(url)
+                            return@handler
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun ChatMessage(
     node: MessageNode,
     modifier: Modifier = Modifier,
@@ -174,7 +207,7 @@ fun ChatMessage(
             message.translation?.let { translation ->
                 CollapsibleTranslationText(
                     content = translation,
-                    onClickCitation = {}
+                    onClickCitation = rememberCitationClickHandler(message.parts)
                 )
             }
         }
@@ -282,26 +315,7 @@ private fun MessagePartsBlock(
     val settings = LocalSettings.current
     val partsState by rememberUpdatedState(parts)
 
-    val handleClickCitation: (String) -> Unit = remember {
-        handler@{ citationId ->
-            partsState.forEach { part ->
-                if (part is UIMessagePart.Tool && part.toolName == "search_web" && part.isExecuted) {
-                    val outputText = part.output.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text }
-                    val items =
-                        runCatching { JsonInstant.parseToJsonElement(outputText).jsonObject["items"]?.jsonArray }.getOrNull()
-                            ?: return@forEach
-                    items.forEach { item ->
-                        val id = item.jsonObject["id"]?.jsonPrimitive?.content ?: return@forEach
-                        val url = item.jsonObject["url"]?.jsonPrimitive?.content ?: return@forEach
-                        if (citationId == id) {
-                            context.openUrl(url)
-                            return@handler
-                        }
-                    }
-                }
-            }
-        }
-    }
+    val handleClickCitation: (String) -> Unit = rememberCitationClickHandler(parts)
     LaunchedEffect(settings.displaySetting) {
         snapshotFlow { partsState }
             .debounce(50.milliseconds)

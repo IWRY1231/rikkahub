@@ -32,7 +32,8 @@ fun createSearchTools(settings: Settings): Set<Tool> {
                     - images[]: image urls related to the query (may be empty)
 
                     Citations:
-                    - After using results, add `[citation,domain](id)` after the sentence.
+                    - After using results, add `[citation,domain](url)` after the sentence.
+                    - The link target must be the item's real `url` (never the short id, never a fabricated url).
                     - Multiple citations are allowed.
                     - If no results are cited, omit citations.
 
@@ -42,8 +43,8 @@ fun createSearchTools(settings: Settings): Set<Tool> {
                     - Usually place the images at the very beginning of your reply; skip them entirely if none are relevant.
 
                     Example:
-                    The capital of France is Paris. [citation,example.com](abc123)
-                    The population is about 2.1 million. [citation,example.com](abc123) [citation,example2.com](def456)
+                    The capital of France is Paris. [citation,example.com](https://www.example.com/paris)
+                    The population is about 2.1 million. [citation,example.com](https://www.example.com/paris) [citation,example2.org](https://www.example2.org/population)
                     """.trimIndent(),
                 parameters = {
                     val options = settings.searchServices.getOrElse(

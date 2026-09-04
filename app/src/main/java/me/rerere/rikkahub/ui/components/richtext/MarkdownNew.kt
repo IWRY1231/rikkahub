@@ -900,12 +900,12 @@ private fun AnnotatedString.Builder.appendHtmlInlineElement(
             val text = element.text()
             when {
                 text.startsWith("citation,") -> {
-                    // Citation link: [citation,domain](id)
-                    val domain = text.substringAfter("citation,")
-                    val id = href
-                    if (id.length == 6) {
+                    // Citation link: [citation,domain](url or legacy 6-char id)
+                    val domain = text.substringAfter("citation,").ifBlank { "source" }
+                    val target = href.trim()
+                    if (target.isNotEmpty()) {
                         inlineContents.putIfAbsent(
-                            "citation:$id",
+                            "citation:$target",
                             InlineTextContent(
                                 placeholder = Placeholder(
                                     width = (domain.length * 7).sp,
@@ -915,7 +915,7 @@ private fun AnnotatedString.Builder.appendHtmlInlineElement(
                                 children = {
                                     Box(
                                         modifier = Modifier
-                                            .clickable { onClickCitation(id.trim()) }
+                                            .clickable { onClickCitation(target) }
                                             .fillMaxSize()
                                             .clip(CircleShape)
                                             .background(colorScheme.tertiaryContainer.copy(0.2f)),
@@ -936,7 +936,7 @@ private fun AnnotatedString.Builder.appendHtmlInlineElement(
                                 },
                             ),
                         )
-                        appendInlineContent("citation:$id")
+                        appendInlineContent("citation:$target")
                     }
                 }
 
