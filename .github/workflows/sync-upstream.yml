@@ -1,12 +1,12 @@
 name: Sync upstream & build
 
-# 每天(UTC 03:00 / 北京时间 11:00)自动同步原版 rikkahub, 合并成功则构建 APK 并发布 Release;
+# 每天(北京时间 02:00 / 14:00, 即 UTC 18:00 / 06:00)自动同步原版 rikkahub, 合并成功则构建 APK 并发布 Release;
 # 出现冲突则自动创建 Issue 提示手动处理。
 # 手动触发: Actions -> Sync upstream & build -> Run workflow
 on:
   schedule:
-    - cron: "0 10 * * *"
-    - cron: "0 22 * * *"
+    - cron: "0 6 * * *"
+    - cron: "0 18 * * *"
   workflow_dispatch:
 
 permissions:
