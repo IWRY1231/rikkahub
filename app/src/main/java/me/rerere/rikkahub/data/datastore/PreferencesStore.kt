@@ -28,6 +28,7 @@ import me.rerere.ai.provider.ProviderSetting
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
 import me.rerere.rikkahub.data.db.AppDatabase
+import me.rerere.rikkahub.data.db.dao.getUsedModelIds
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_COMPRESS_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_OCR_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_SUGGESTION_PROMPT
@@ -419,6 +420,7 @@ class SettingsStore(
                         .filter { it.id !in liveIds }
                         .distinctBy { it.id }
                 },
+            )
         }
         .onEach {
             get<PebbleEngine>().templateCache.invalidateAll()
