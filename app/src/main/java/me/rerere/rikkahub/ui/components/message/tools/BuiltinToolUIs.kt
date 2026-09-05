@@ -802,7 +802,8 @@ private fun ScrapeWebPreview(content: JsonElement) {
         }
 
         items(urls) { url ->
-            val urlObject = url.jsonObject
+            // 数组收缩兜底会插入占位字符串条目, 这里须防御非对象元素
+            val urlObject = url.jsonObjectOrNull ?: return@items
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(4.dp),

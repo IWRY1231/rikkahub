@@ -15,6 +15,9 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -35,7 +38,6 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.transformers.InputMessageTransformer
 import me.rerere.rikkahub.data.ai.transformers.MessageTransformer
 import me.rerere.rikkahub.data.ai.transformers.OutputMessageTransformer
-import me.rerere.rikkahub.data.files.FileFolders
 import me.rerere.rikkahub.data.ai.transformers.onGenerationFinish
 import me.rerere.rikkahub.data.ai.transformers.transforms
 import me.rerere.rikkahub.data.ai.transformers.visualTransforms
@@ -45,7 +47,6 @@ import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantMemory
 import me.rerere.rikkahub.data.repository.MemoryRepository
-import java.io.File
 import java.io.IOException
 import java.net.ConnectException
 import java.net.NoRouteToHostException
@@ -56,7 +57,10 @@ import kotlin.uuid.Uuid
 
 private const val TAG = "GenerationHandler"
 private const val MAX_TOOL_OUTPUT_CHARS = 32 * 1024
-private const val TOOL_OUTPUT_PREVIEW_CHARS = 4 * 1024
+private const val TOOL_OUTPUT_JSON_TARGET_CHARS = 28 * 1024
+private const val TOOL_OUTPUT_JSON_STRING_MAX = 400
+private const val TOOL_OUTPUT_PLAIN_HEAD_CHARS = 24 * 1024
+private const val TOOL_OUTPUT_PLAIN_TAIL_CHARS = 2 * 1024
 private const val MAX_PROVIDER_NETWORK_RETRIES = 3
 private const val INITIAL_PROVIDER_RETRY_DELAY_MS = 1_000L
 
@@ -294,9 +298,8 @@ class GenerationHandler(
                             }
                             Log.i(TAG, "generateText: executing tool ${toolDef.name} with args: $args")
                             val result = toolDef.execute(args)
-                            val hasShellAccess = toolsInternal.any { it.name == "workspace_shell" }
                             executedTools += tool.copy(
-                                output = maybeTruncateToolOutput(tool.toolCallId, result, hasShellAccess)
+                                output = maybeTruncateToolOutput(tool.toolCallId, result)
                             )
                         }.onFailure {
                             // 取消必须向上传播，否则停止生成会被误报为工具执行错误
@@ -561,38 +564,87 @@ class GenerationHandler(
         return context.getString(messageRes)
     }
 
+    /**
+     * 超长工具输出的消息内收缩(不落盘, 取代旧 /tool_outputs 文件方案):
+     * - JSON 输出: 分级收缩(先截过长字符串、保留全部条目, 仍超限再裁数组条数),
+     *   始终保持合法 JSON, 搜索/抓取卡片 UI 可正常渲染;
+     * - 纯文本输出: 保留首尾, 中间以标记省略。
+     */
     private fun maybeTruncateToolOutput(
         toolCallId: String,
         output: List<UIMessagePart>,
-        hasShellAccess: Boolean,
     ): List<UIMessagePart> {
         val textParts = output.filterIsInstance<UIMessagePart.Text>()
         val nonTextParts = output.filter { it !is UIMessagePart.Text }
         val totalChars = textParts.sumOf { it.text.length }
 
-        if (totalChars <= MAX_TOOL_OUTPUT_CHARS || !hasShellAccess) return output
+        if (totalChars <= MAX_TOOL_OUTPUT_CHARS) return output
 
-        Log.i(TAG, "maybeTruncateToolOutput: truncating tool $toolCallId output ($totalChars chars)")
+        Log.i(TAG, "maybeTruncateToolOutput: shrinking tool $toolCallId output ($totalChars chars)")
 
         val fullText = textParts.joinToString("\n") { it.text }
-        val preview = fullText.take(TOOL_OUTPUT_PREVIEW_CHARS)
+        val shrunk = runCatching { shrinkJsonOutput(fullText) }
+            .getOrElse {
+                Log.i(TAG, "maybeTruncateToolOutput: output is not valid json, plain truncation")
+                truncatePlainText(fullText)
+            }
 
-        val fileName = "${toolCallId}.txt"
-        val outputDir = File(context.filesDir, FileFolders.TOOL_OUTPUTS).apply { mkdirs() }
-        File(outputDir, fileName).writeText(fullText)
+        return listOf(UIMessagePart.Text(shrunk)) + nonTextParts
+    }
 
-        return listOf(
-            UIMessagePart.Text(
-                buildString {
-                    appendLine("[Tool output truncated: $totalChars characters total]")
-                    appendLine("Full output saved to: /tool_outputs/$fileName")
-                    appendLine("Use shell to read: `cat /tool_outputs/$fileName`")
-                    appendLine("Use shell to search: `grep \"pattern\" /tool_outputs/$fileName`")
-                    appendLine()
-                    append(preview)
+    /**
+     * JSON 分级收缩: (字符串截断上限, 数组保留条数) 由宽到严逐级尝试,
+     * 返回第一个不超过目标的合法 JSON; 数组被裁剪时插入占位字符串条目。
+     */
+    private fun shrinkJsonOutput(text: String): String {
+        val root = json.parseToJsonElement(text)
+        val stages = listOf(
+            TOOL_OUTPUT_JSON_STRING_MAX to 2048,
+            200 to 256,
+            120 to 64,
+            80 to 16,
+            60 to 6,
+        )
+        var encoded = ""
+        for ((stringCap, arrayKeep) in stages) {
+            encoded = json.encodeToString(JsonElement.serializer(), shrinkJsonElement(root, stringCap, arrayKeep))
+            if (encoded.length <= TOOL_OUTPUT_JSON_TARGET_CHARS) return encoded
+        }
+        return encoded
+    }
+
+    private fun shrinkJsonElement(element: JsonElement, stringCap: Int, arrayKeep: Int): JsonElement =
+        when (element) {
+            is JsonPrimitive -> {
+                if (element.isString && element.content.length > stringCap) {
+                    JsonPrimitive(
+                        element.content.take(stringCap) +
+                            "…[truncated ${element.content.length - stringCap} chars]"
+                    )
+                } else {
+                    element
                 }
-            )
-        ) + nonTextParts
+            }
+
+            is JsonObject -> JsonObject(element.mapValues { (_, value) -> shrinkJsonElement(value, stringCap, arrayKeep) })
+            is JsonArray -> {
+                val kept = element.take(arrayKeep)
+                val dropped = element.size - kept.size
+                if (dropped > 0) {
+                    JsonArray(kept + JsonPrimitive("[… $dropped more items truncated]"))
+                } else {
+                    JsonArray(kept)
+                }
+            }
+        }
+
+    private fun truncatePlainText(text: String): String = buildString {
+        append(text.take(TOOL_OUTPUT_PLAIN_HEAD_CHARS))
+        appendLine()
+        append("[… truncated ")
+        append(text.length - TOOL_OUTPUT_PLAIN_HEAD_CHARS - TOOL_OUTPUT_PLAIN_TAIL_CHARS)
+        append(" chars in the middle …]")
+        append(text.takeLast(TOOL_OUTPUT_PLAIN_TAIL_CHARS))
     }
 
 }

@@ -16,6 +16,29 @@ import me.rerere.search.SearchServiceOptions
 import java.time.LocalDate
 import kotlin.uuid.Uuid
 
+// ---------- 工具输出源头瘦身 ----------
+// 防止搜索/抓取输出超长触发 GenerationHandler 截断(条目丢失 + 卡片 UI 降级)。
+// 按条数自适应分摊预算: 条多则单条上限收窄, 总体积有确定上界。
+
+private const val SEARCH_TEXT_BUDGET_CHARS = 20_000
+private const val SEARCH_ITEM_TEXT_MIN = 400
+private const val SEARCH_ITEM_TEXT_MAX = 1_200
+private const val SEARCH_ANSWER_MAX_CHARS = 4_000
+private const val SEARCH_IMAGES_MAX = 10
+
+private const val SCRAPE_CONTENT_BUDGET_CHARS = 24_000
+private const val SCRAPE_PAGE_MIN = 2_000
+private const val SCRAPE_PAGE_MAX = 12_000
+
+private fun capText(text: String, maxChars: Int): String =
+    if (text.length <= maxChars) text
+    else text.take(maxChars) + "…[truncated ${text.length - maxChars} chars]"
+
+private fun adaptiveCap(count: Int, budget: Int, min: Int, max: Int, overhead: Int = 500): Int {
+    if (count <= 0) return max
+    return ((budget / count) - overhead).coerceIn(min, max)
+}
+
 fun createSearchTools(settings: Settings): Set<Tool> {
     return buildSet {
         add(
@@ -63,8 +86,23 @@ fun createSearchTools(settings: Settings): Set<Tool> {
                         commonOptions = settings.searchCommonOptions,
                         serviceOptions = options,
                     )
+                    val searchResult = result.getOrThrow()
+                    // 源头瘦身: 超长摘要/答案截断, 条目全保留, 总体积有上界
+                    val textCap = adaptiveCap(
+                        count = searchResult.items.size,
+                        budget = SEARCH_TEXT_BUDGET_CHARS,
+                        min = SEARCH_ITEM_TEXT_MIN,
+                        max = SEARCH_ITEM_TEXT_MAX,
+                    )
+                    val shaped = searchResult.copy(
+                        answer = searchResult.answer?.let { capText(it, SEARCH_ANSWER_MAX_CHARS) },
+                        images = searchResult.images.take(SEARCH_IMAGES_MAX),
+                        items = searchResult.items.map { item ->
+                            item.copy(text = capText(item.text, textCap))
+                        },
+                    )
                     val results =
-                        JsonInstantPretty.encodeToJsonElement(result.getOrThrow()).jsonObject.let { json ->
+                        JsonInstantPretty.encodeToJsonElement(shaped).jsonObject.let { json ->
                             val map = json.toMutableMap()
                             map["items"] =
                                 JsonArray(map["items"]!!.jsonArray.mapIndexed { index, item ->
@@ -110,7 +148,17 @@ fun createSearchTools(settings: Settings): Set<Tool> {
                             commonOptions = settings.searchCommonOptions,
                             serviceOptions = options,
                         )
-                        val payload = JsonInstantPretty.encodeToJsonElement(result.getOrThrow()).jsonObject
+                        val scraped = result.getOrThrow()
+                        // 源头瘦身: 多页均摊预算截断超长正文, 单页上限 12K
+                        val contentCap = adaptiveCap(
+                            count = scraped.urls.size,
+                            budget = SCRAPE_CONTENT_BUDGET_CHARS,
+                            min = SCRAPE_PAGE_MIN,
+                            max = SCRAPE_PAGE_MAX,
+                        )
+                        val payload = JsonInstantPretty.encodeToJsonElement(
+                            scraped.copy(urls = scraped.urls.map { it.copy(content = capText(it.content, contentCap)) })
+                        ).jsonObject
                         listOf(UIMessagePart.Text(payload.toString()))
                     }
                 ))
