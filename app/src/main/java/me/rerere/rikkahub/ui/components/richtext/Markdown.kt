@@ -504,7 +504,7 @@ private fun MarkdownNode(
         }
 
         GFMElementTypes.TABLE -> {
-            TableNode(node = node, content = content, modifier = modifier)
+            TableNode(node = node, content = content, modifier = modifier, onClickCitation = onClickCitation)
         }
 
         MarkdownTokenTypes.HORIZONTAL_RULE -> {
@@ -829,7 +829,12 @@ private fun Paragraph(
 }
 
 @Composable
-private fun TableNode(node: ASTNode, content: String, modifier: Modifier = Modifier) {
+private fun TableNode(
+    node: ASTNode,
+    content: String,
+    modifier: Modifier = Modifier,
+    onClickCitation: (String) -> Unit,
+) {
     // 提取表格的标题行和数据行
     val headerNode = node.children.find { it.type == GFMElementTypes.HEADER }
     val rowNodes = node.children.filter { it.type == GFMElementTypes.ROW }
@@ -855,6 +860,7 @@ private fun TableNode(node: ASTNode, content: String, modifier: Modifier = Modif
         @Composable {
             MarkdownBlock(
                 content = if (columnIndex < headerCells.size) headerCells[columnIndex] else "",
+                onClickCitation = onClickCitation,
             )
         }
     }
@@ -865,6 +871,7 @@ private fun TableNode(node: ASTNode, content: String, modifier: Modifier = Modif
             @Composable {
                 MarkdownBlock(
                     content = if (columnIndex < rowData.size) rowData[columnIndex] else "",
+                    onClickCitation = onClickCitation,
                 )
             }
         }
