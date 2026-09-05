@@ -104,6 +104,7 @@ class SettingsStore(
 
         // 提供商
         val PROVIDERS = stringPreferencesKey("providers")
+        val ARCHIVED_MODELS = stringPreferencesKey("archived_models")
 
         // 助手
         val SELECT_ASSISTANT = stringPreferencesKey("select_assistant")
@@ -186,6 +187,7 @@ class SettingsStore(
                 preferences[COMPRESS_PROMPT] = settings.compressPrompt
 
                 preferences[PROVIDERS] = JsonInstant.encodeToString(settings.providers)
+                preferences[ARCHIVED_MODELS] = JsonInstant.encodeToString(settings.archivedModels)
 
                 preferences[ASSISTANTS] = JsonInstant.encodeToString(settings.assistants)
                 preferences[SELECT_ASSISTANT] = settings.assistantId.toString()
@@ -261,6 +263,9 @@ class SettingsStore(
                     JsonInstant.decodeFromString(it)
                 } ?: emptyList(),
                 providers = JsonInstant.decodeFromString(preferences[PROVIDERS] ?: "[]"),
+                archivedModels = preferences[ARCHIVED_MODELS]?.let {
+                    JsonInstant.decodeFromString(it)
+                } ?: emptyList(),
                 assistants = JsonInstant.decodeFromString(preferences[ASSISTANTS] ?: "[]"),
                 dynamicColor = preferences[DYNAMIC_COLOR] != false,
                 themeId = preferences[THEME_ID] ?: PresetThemes[0].id,
@@ -406,7 +411,14 @@ class SettingsStore(
                 modeInjections = settings.modeInjections.distinctBy { it.id },
                 lorebooks = settings.lorebooks.distinctBy { it.id },
                 quickMessages = settings.quickMessages.distinctBy { it.id },
-            )
+                // 归档模型快照清理: 剔除已恢复存在的模型, 去重并限制数量上限
+                archivedModels = run {
+                    val liveIds = settings.providers.flatMapTo(HashSet()) { provider -> provider.models.map { it.id } }
+                    settings.archivedModels
+                        .filter { it.id !in liveIds }
+                        .distinctBy { it.id }
+                        .take(ARCHIVED_MODELS_LIMIT)
+                },
         }
         .onEach {
             get<PebbleEngine>().templateCache.invalidateAll()
@@ -421,8 +433,9 @@ class SettingsStore(
             Log.w(TAG, "Cannot update dummy settings")
             return
         }
-        settingsFlow.value = settings
-        persistSettings(dataStore, settings)
+        val merged = settings.archiveRemovedModels(settingsFlow.value)
+        settingsFlow.value = merged
+        persistSettings(dataStore, merged)
     }
 
     suspend fun update(fn: (Settings) -> Settings) {
@@ -542,6 +555,8 @@ data class Settings(
     val compressPrompt: String = DEFAULT_COMPRESS_PROMPT,
     val assistantId: Uuid = DEFAULT_ASSISTANT_ID,
     val providers: List<ProviderSetting> = DEFAULT_PROVIDERS,
+    // 已删除供应商/模型的快照归档, 用于历史消息展示模型图标与名称(不参与请求)
+    val archivedModels: List<Model> = emptyList(),
     val assistants: List<Assistant> = DEFAULT_ASSISTANTS,
     val assistantTags: List<Tag> = emptyList(),
     val searchServices: List<SearchServiceOptions> = listOf(SearchServiceOptions.DEFAULT),
@@ -661,12 +676,35 @@ data class BackupReminderConfig(
     val lastBackupTime: Long = 0L,
 )
 
+// 归档模型数量上限, 防止 DataStore 无限膨胀
+private const val ARCHIVED_MODELS_LIMIT = 200
+
+/**
+ * 将本次更新中被删除的模型并入归档列表。
+ * 以 [previous] 的供应商列表为基准做差集, 供应商被删除或模型被移除后,
+ * 历史消息仍可通过归档快照展示模型图标与名称(归档不参与会话请求)。
+ */
+private fun Settings.archiveRemovedModels(previous: Settings): Settings {
+    if (previous.init) return this
+    val liveIds = providers.flatMapTo(HashSet()) { provider -> provider.models.map { it.id } }
+    val removed = previous.providers.flatMap { it.models }.filter { it.id !in liveIds }
+    if (removed.isEmpty()) return this
+    val merged = (removed + archivedModels + previous.archivedModels)
+        .distinctBy { it.id }
+        .filter { it.id !in liveIds }
+        .take(ARCHIVED_MODELS_LIMIT)
+    if (merged == archivedModels) return this
+    return copy(archivedModels = merged)
+}
+
 fun Settings.isNotConfigured() = providers.all { it.models.isEmpty() }
 
 fun Settings.findModelById(uuid: Uuid?, fallback: Uuid? = null): Model? {
     if (uuid == null && fallback == null) return null
     return uuid?.let { this.providers.findModelById(it) }
         ?: fallback?.let { this.providers.findModelById(it) }
+        ?: uuid?.let { id -> this.archivedModels.find { it.id == id } }
+        ?: fallback?.let { id -> this.archivedModels.find { it.id == id } }
 }
 
 fun List<ProviderSetting>.findModelById(uuid: Uuid): Model? {

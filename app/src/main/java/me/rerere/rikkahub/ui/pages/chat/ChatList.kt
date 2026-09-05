@@ -263,9 +263,9 @@ private fun ChatListNormal(
     val assistant = remember(settings.assistants, conversation.assistantId) {
         settings.getAssistantById(conversation.assistantId)
     }
-    val modelById = remember(settings.providers) {
-        settings.providers
-            .flatMap { it.models }
+    // 已删除供应商的模型快照也参与解析(仅用于历史消息展示), 当前供应商优先
+    val modelById = remember(settings.providers, settings.archivedModels) {
+        (settings.archivedModels + settings.providers.flatMap { it.models })
             .associateBy { it.id }
     }
     val lastMessageIndex = conversation.messageNodes.lastIndex
