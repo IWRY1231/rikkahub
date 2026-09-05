@@ -27,6 +27,7 @@ import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
+import me.rerere.rikkahub.data.db.AppDatabase
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_COMPRESS_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_OCR_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_SUGGESTION_PROMPT
@@ -411,13 +412,12 @@ class SettingsStore(
                 modeInjections = settings.modeInjections.distinctBy { it.id },
                 lorebooks = settings.lorebooks.distinctBy { it.id },
                 quickMessages = settings.quickMessages.distinctBy { it.id },
-                // 归档模型快照清理: 剔除已恢复存在的模型, 去重并限制数量上限
+                // 归档模型快照清理: 剔除已恢复存在的模型并去重(引用过滤在 update 归档时进行)
                 archivedModels = run {
                     val liveIds = settings.providers.flatMapTo(HashSet()) { provider -> provider.models.map { it.id } }
                     settings.archivedModels
                         .filter { it.id !in liveIds }
                         .distinctBy { it.id }
-                        .take(ARCHIVED_MODELS_LIMIT)
                 },
         }
         .onEach {
@@ -433,13 +433,39 @@ class SettingsStore(
             Log.w(TAG, "Cannot update dummy settings")
             return
         }
-        val merged = settings.archiveRemovedModels(settingsFlow.value)
+        val merged = archiveRemovedModels(settings, settingsFlow.value)
         settingsFlow.value = merged
         persistSettings(dataStore, merged)
     }
 
     suspend fun update(fn: (Settings) -> Settings) {
         update(fn(settingsFlow.value))
+    }
+
+    /**
+     * 供应商/模型被删除后, 将其中真正参与过对话的模型快照并入归档列表,
+     * 用于历史消息展示模型图标与名称(归档不参与会话请求)。
+     * 以消息表中的 modelId 为准全量重算: 只保留被消息引用的模型,
+     * 删除会话产生的残留会在下一次归档时自动清除。
+     */
+    private suspend fun archiveRemovedModels(newSettings: Settings, previous: Settings): Settings {
+        if (previous.init) return newSettings
+        val liveIds = newSettings.providers.flatMapTo(HashSet()) { provider -> provider.models.map { it.id } }
+        val removed = previous.providers.flatMap { it.models }.filter { it.id !in liveIds }
+        // 无模型变动时跳过扫描, 避免每次设置更新都查询消息表
+        if (removed.isEmpty()) return newSettings
+        val candidates = (removed + newSettings.archivedModels + previous.archivedModels)
+            .distinctBy { it.id }
+            .filter { it.id !in liveIds }
+        // 扫描消息表提取被引用的 modelId; 失败时退化为全量保留(只影响展示), 下次归档时自动重算修正
+        val usedIds = runCatching { get<AppDatabase>().messageNodeDao().getUsedModelIds() }
+            .getOrElse {
+                Log.w(TAG, "scan used model ids failed, archive candidates without filtering")
+                return newSettings.copy(archivedModels = candidates)
+            }
+        val merged = candidates.filter { it.id.toString() in usedIds }
+        if (merged == newSettings.archivedModels) return newSettings
+        return newSettings.copy(archivedModels = merged)
     }
 
     suspend fun updateAssistant(assistantId: Uuid) {
@@ -675,27 +701,6 @@ data class BackupReminderConfig(
     val intervalDays: Int = 7,
     val lastBackupTime: Long = 0L,
 )
-
-// 归档模型数量上限, 防止 DataStore 无限膨胀
-private const val ARCHIVED_MODELS_LIMIT = 200
-
-/**
- * 将本次更新中被删除的模型并入归档列表。
- * 以 [previous] 的供应商列表为基准做差集, 供应商被删除或模型被移除后,
- * 历史消息仍可通过归档快照展示模型图标与名称(归档不参与会话请求)。
- */
-private fun Settings.archiveRemovedModels(previous: Settings): Settings {
-    if (previous.init) return this
-    val liveIds = providers.flatMapTo(HashSet()) { provider -> provider.models.map { it.id } }
-    val removed = previous.providers.flatMap { it.models }.filter { it.id !in liveIds }
-    if (removed.isEmpty()) return this
-    val merged = (removed + archivedModels + previous.archivedModels)
-        .distinctBy { it.id }
-        .filter { it.id !in liveIds }
-        .take(ARCHIVED_MODELS_LIMIT)
-    if (merged == archivedModels) return this
-    return copy(archivedModels = merged)
-}
 
 fun Settings.isNotConfigured() = providers.all { it.models.isEmpty() }
 

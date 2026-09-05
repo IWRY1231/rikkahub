@@ -46,6 +46,9 @@ interface MessageNodeDAO {
 
     @RawQuery
     suspend fun getMessageCountPerDayRaw(query: SupportSQLiteQuery): List<MessageDayCount>
+
+    @RawQuery
+    suspend fun getModelIdsRaw(query: SupportSQLiteQuery): List<UsedModelIdRow>
 }
 
 data class MessageTokenStats(
@@ -67,6 +70,19 @@ private val TOKEN_STATS_SQL = SimpleSQLiteQuery(
 )
 
 suspend fun MessageNodeDAO.getTokenStats(): MessageTokenStats = getTokenStatsRaw(TOKEN_STATS_SQL)
+
+data class UsedModelIdRow(val modelId: String? = null)
+
+// 提取所有消息中出现过的 modelId(用于供应商/模型删除后判定归档保留范围)
+private val USED_MODEL_IDS_SQL = SimpleSQLiteQuery(
+    "SELECT DISTINCT json_extract(j.value, '$.modelId') AS modelId " +
+        "FROM message_node mn, json_each(mn.messages) j"
+)
+
+suspend fun MessageNodeDAO.getUsedModelIds(): Set<String> =
+    getModelIdsRaw(USED_MODEL_IDS_SQL)
+        .mapNotNull { it.modelId?.takeIf(String::isNotBlank) }
+        .toSet()
 
 // 按用户消息的 createdAt 字段（LocalDateTime ISO 字符串前10位即日期）统计每日消息数
 suspend fun MessageNodeDAO.getMessageCountPerDay(startDate: String): List<MessageDayCount> =
