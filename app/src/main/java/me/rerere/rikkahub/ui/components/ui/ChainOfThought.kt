@@ -54,8 +54,8 @@ private val LocalCardColor = staticCompositionLocalOf { Color.White }
  * 以时间线/步骤卡片的形式展示一组思考过程。
  *
  * 适用于承载推理步骤、工具调用步骤，或两者混合的链式内容。组件支持：
- * - 在步骤较多时自动折叠，仅展示最后若干步
- * - 点击顶部控制条展开/收起全部步骤
+ * - 默认展开全部步骤，点击顶部控制条收起（收起时仅展示最后若干步）
+ * - 再次点击可重新展开；手动收起后流式新增步骤不会自动重新展开
  * - 通过 [collapsedAdaptiveWidth] 控制折叠态是否保持自适应宽度
  *
  * @param modifier 外层卡片的修饰符
@@ -76,7 +76,8 @@ fun <T> ChainOfThought(
     collapsedAdaptiveWidth: Boolean = false,
     content: @Composable ChainOfThoughtScope.(T) -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    // 默认展开全部步骤; 用户手动收起后保持收起(remember 持久化, 流式新增步骤不会重新展开)
+    var expanded by remember { mutableStateOf(true) }
     val canCollapse = steps.size > collapsedVisibleCount
     val shouldFillCollapseControlWidth = expanded || !collapsedAdaptiveWidth
 
