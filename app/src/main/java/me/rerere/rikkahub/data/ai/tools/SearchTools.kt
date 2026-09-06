@@ -14,6 +14,7 @@ import me.rerere.rikkahub.utils.toLocalString
 import me.rerere.search.SearchService
 import me.rerere.search.SearchServiceOptions
 import java.time.LocalDate
+import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
 // ---------- 工具输出源头瘦身 ----------
@@ -47,11 +48,17 @@ fun createSearchTools(settings: Settings): Set<Tool> {
                 description = """
                     Search the web for up-to-date or specific information.
                     Use this when the user asks for the latest news, current facts, or needs verification.
+                    Do not treat result order as proof of freshness. Prefer primary sources and inspect
+                    each result's title, URL, publication date, and content before making a current claim.
+                    Use the optional publication-date and domain filters only when they match the question.
+                    If a date or primary source is missing, or sources conflict, run another focused search
+                    or use scrape_web to verify the most relevant source before answering.
                     Generate focused keywords and run multiple searches if needed.
                     Today is ${LocalDate.now().toLocalString(true)}.
 
                     Response format:
-                    - items[].id (short id), title, url, text
+                    - retrievedAt is the local retrieval time, never a publication date
+                    - items[].id (short id), index, title, url, publishedDate (if supplied), highlights (if supplied), text
                     - images[]: image urls related to the query (may be empty)
 
                     Citations:
@@ -87,6 +94,7 @@ fun createSearchTools(settings: Settings): Set<Tool> {
                         serviceOptions = options,
                     )
                     val searchResult = result.getOrThrow()
+                        .copy(retrievedAt = Clock.System.now().toString())
                     // 源头瘦身: 超长摘要/答案截断, 条目全保留, 总体积有上界
                     val textCap = adaptiveCap(
                         count = searchResult.items.size,
@@ -98,7 +106,10 @@ fun createSearchTools(settings: Settings): Set<Tool> {
                         answer = searchResult.answer?.let { capText(it, SEARCH_ANSWER_MAX_CHARS) },
                         images = searchResult.images.take(SEARCH_IMAGES_MAX),
                         items = searchResult.items.map { item ->
-                            item.copy(text = capText(item.text, textCap))
+                            item.copy(
+                                text = capText(item.text, textCap),
+                                highlights = item.highlights.take(3).map { capText(it, 300) },
+                            )
                         },
                     )
                     val results =
@@ -128,7 +139,8 @@ fun createSearchTools(settings: Settings): Set<Tool> {
                     name = "scrape_web",
                     description = """
                         Scrape a URL for detailed page content.
-                        Use this when the user requests content from a specific page or when search snippets are insufficient.
+                        Use this when the user requests content from a specific page, when search snippets are insufficient,
+                        or when a current claim needs verification against a specific source.
                         Avoid using it for common questions unless the user asks.
                         """.trimIndent(),
                     parameters = {
@@ -149,6 +161,7 @@ fun createSearchTools(settings: Settings): Set<Tool> {
                             serviceOptions = options,
                         )
                         val scraped = result.getOrThrow()
+                            .copy(retrievedAt = Clock.System.now().toString())
                         // 源头瘦身: 多页均摊预算截断超长正文, 单页上限 12K
                         val contentCap = adaptiveCap(
                             count = scraped.urls.size,
