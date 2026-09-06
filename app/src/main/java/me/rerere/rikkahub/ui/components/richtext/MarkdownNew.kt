@@ -76,6 +76,8 @@ import me.rerere.rikkahub.ui.components.table.DataTable
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.theme.JetbrainsMono
 import me.rerere.rikkahub.utils.toDp
+import org.intellij.markdown.ast.ASTNode
+import org.intellij.markdown.flavours.gfm.GFMElementTypes
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.html.HtmlGenerator
 import org.intellij.markdown.parser.MarkdownParser
@@ -112,10 +114,44 @@ private val flavour by lazy {
 
 private val parser by lazy { MarkdownParser(flavour) }
 
+private const val RANGE_TILDE_PLACEHOLDER = '\u0001'
+
 private fun generateMarkdownHtml(content: String): String {
     val preprocessed = preProcess(content)
     val tree = parser.buildMarkdownTreeFromString(preprocessed)
-    return HtmlGenerator(preprocessed, tree, flavour).generateHtml()
+    val neutralized = neutralizeRangeLikeStrikeThrough(preprocessed, tree)
+    if (neutralized == preprocessed) {
+        return HtmlGenerator(preprocessed, tree, flavour).generateHtml()
+    }
+    // 占位符使区间 '~' 不再被识别为删除线定界符, HTML 生成后还原为字面 '~'
+    return HtmlGenerator(
+        neutralized,
+        parser.buildMarkdownTreeFromString(neutralized),
+        flavour
+    ).generateHtml().replace(RANGE_TILDE_PLACEHOLDER, '~')
+}
+
+/**
+ * 区间样式的单波浪线(如 8~15)会被 GFM 单波浪线删除线误吞并划掉中间内容:
+ * 找出区间特征的 STRIKETHROUGH 节点, 把源文本中两侧的 '~' 换成占位符再重新解析,
+ * 使其按普通文本输出。~~text~~ 标准删除线不受影响(见 isRangeLikeStrikeThrough)。
+ */
+private fun neutralizeRangeLikeStrikeThrough(content: String, tree: ASTNode): String {
+    val targets = mutableListOf<ASTNode>()
+    fun walk(node: ASTNode) {
+        if (node.type == GFMElementTypes.STRIKETHROUGH && isRangeLikeStrikeThrough(node, content)) {
+            targets.add(node)
+        }
+        node.children.forEach { walk(it) }
+    }
+    walk(tree)
+    if (targets.isEmpty()) return content
+    val sb = StringBuilder(content)
+    targets.forEach { node ->
+        sb.setCharAt(node.startOffset, RANGE_TILDE_PLACEHOLDER)
+        sb.setCharAt(node.endOffset - 1, RANGE_TILDE_PLACEHOLDER)
+    }
+    return sb.toString()
 }
 
 // ---- Main composable ----

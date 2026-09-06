@@ -499,7 +499,9 @@ private fun MarkdownNode(
         // GFM 特殊元素
         GFMElementTypes.STRIKETHROUGH -> {
             Text(
-                text = node.getTextInNode(content), textDecoration = TextDecoration.LineThrough, modifier = modifier
+                text = node.getTextInNode(content),
+                textDecoration = if (isRangeLikeStrikeThrough(node, content)) null else TextDecoration.LineThrough,
+                modifier = modifier
             )
         }
 
@@ -1066,8 +1068,9 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
         }
 
         node.type == GFMElementTypes.STRIKETHROUGH -> {
-            withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) {
-                node.children.trim(GFMTokenTypes.TILDE, 2).fastForEach {
+            if (isRangeLikeStrikeThrough(node, content)) {
+                // 区间写法(如 8~15)被单波浪线删除线误吞: 按普通文本渲染, 保留波浪号
+                node.children.fastForEach {
                     appendMarkdownNodeContent(
                         node = it,
                         content = content,
@@ -1079,6 +1082,22 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
                         latexColorArgb = latexColorArgb,
                         onClickCitation = onClickCitation
                     )
+                }
+            } else {
+                withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) {
+                    node.children.trim(GFMTokenTypes.TILDE, 2).fastForEach {
+                        appendMarkdownNodeContent(
+                            node = it,
+                            content = content,
+                            inlineContents = inlineContents,
+                            colorScheme = colorScheme,
+                            density = density,
+                            style = style,
+                            enableLatexRendering = enableLatexRendering,
+                            latexColorArgb = latexColorArgb,
+                            onClickCitation = onClickCitation
+                        )
+                    }
                 }
             }
         }
@@ -1252,6 +1271,21 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
 
 private fun ASTNode.getTextInNode(text: String): String {
     return text.substring(startOffset, endOffset)
+}
+
+/**
+ * 单波浪线删除线在中文语境常是数字/汉字区间写法(如 8~15 分钟),
+ * GFM 单波浪线删除线(~text~)会误吞区间号并给中间内容画删除线。
+ * 判定特征: 节点由单波浪线定界(非 ~~), 且紧邻节点前后的字符都是数字或汉字 → 视为区间写法,
+ * 渲染时按普通文本处理(波浪号可见)。~~text~~ 标准删除线不受影响。
+ */
+internal fun isRangeLikeStrikeThrough(node: ASTNode, content: String): Boolean {
+    val text = content.substring(node.startOffset, node.endOffset)
+    if (!text.startsWith("~") || text.startsWith("~~")) return false
+    if (!text.endsWith("~") || text.endsWith("~~")) return false
+    if (node.startOffset == 0 || node.endOffset >= content.length) return false
+    fun isRangeChar(c: Char): Boolean = c.isDigit() || c in '\u4E00'..'\u9FFF'
+    return isRangeChar(content[node.startOffset - 1]) && isRangeChar(content[node.endOffset])
 }
 
 private fun ASTNode.getTextInNode(text: String, type: IElementType): String {
