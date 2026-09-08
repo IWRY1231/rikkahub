@@ -790,7 +790,15 @@ private fun BoxScope.MessageJumper(
                     imageVector = HugeIcons.ArrowUp01,
                     contentDescription = null,
                     modifier = Modifier
-                        .clickable { scope.launch { state.animateScrollToItem(                             (state.firstVisibleItemIndex - 1).fastCoerceAtLeast(                                 0                             )                         ) } }
+                        .clickable {
+                            scope.launch {
+                                state.animateScrollToItem(
+                                    (state.firstVisibleItemIndex - 1).fastCoerceAtLeast(
+                                        0
+                                    )
+                                )
+                            }
+                        }
                         .padding(4.dp)
                 )
             }
