@@ -53,9 +53,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.surfaceColorAtElevation
-import androidx.compose.material3.LocalMinimumInteractiveComponentEnforcement
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -291,12 +289,12 @@ private fun ChatListNormal(
             }
         }
 
-        // 消息快速跳转按钮: 滚动期间常驻显示, 无操作 3 秒后隐藏
+        // 消息快速跳转按钮: 滚动期间常驻显示, 无操作 2 秒后隐藏
         LaunchedEffect(state.isScrollInProgress) {
             if (state.isScrollInProgress) {
                 jumperVisible = true
             } else {
-                delay(3000)
+                delay(2000)
                 jumperVisible = false
             }
         }
@@ -762,89 +760,67 @@ private fun BoxScope.MessageJumper(
             targetOffsetX = { if (onLeft) -it * 2 else it * 2 },
         )
     ) {
-        CompositionLocalProvider(LocalMinimumInteractiveComponentEnforcement provides false) {
-            Column(
-                modifier = Modifier.padding(8.dp),
-                verticalArrangement = Arrangement.spacedBy(0.dp)
+        Column(
+            modifier = Modifier.padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                tonalElevation = 4.dp,
+                color = MaterialTheme.colorScheme.surfaceColorAtElevation(
+                    4.dp
+                )
             ) {
-                Surface(
-                    onClick = {
-                        scope.launch {
-                            state.scrollToItem(0)
-                        }
-                    },
-                    shape = CircleShape,
-                    tonalElevation = 4.dp,
-                    color = MaterialTheme.colorScheme.surfaceColorAtElevation(
-                        4.dp
-                    )
-                ) {
-                    Icon(
-                        imageVector = HugeIcons.ArrowUpDouble,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .padding(4.dp)
-                    )
-                }
-                Surface(
-                    onClick = {
-                        scope.launch {
-                            state.animateScrollToItem(
-                                (state.firstVisibleItemIndex - 1).fastCoerceAtLeast(
-                                    0
-                                )
-                            )
-                        }
-                    },
-                    shape = CircleShape,
-                    tonalElevation = 4.dp,
-                    color = MaterialTheme.colorScheme.surfaceColorAtElevation(
-                        4.dp
-                    )
-                ) {
-                    Icon(
-                        imageVector = HugeIcons.ArrowUp01,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .padding(4.dp)
-                    )
-                }
-                Surface(
-                    onClick = {
-                        scope.launch {
-                            state.animateScrollToItem(state.firstVisibleItemIndex + 1)
-                        }
-                    },
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceColorAtElevation(
-                        4.dp
-                    )
-                ) {
-                    Icon(
-                        imageVector = HugeIcons.ArrowDown01,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .padding(4.dp)
-                    )
-                }
-                Surface(
-                    onClick = {
-                        scope.launch {
-                            state.scrollToItem(state.layoutInfo.totalItemsCount - 1)
-                        }
-                    },
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceColorAtElevation(
-                        4.dp
-                    ),
-                ) {
-                    Icon(
-                        imageVector = HugeIcons.ArrowDownDouble,
-                        contentDescription = stringResource(R.string.chat_page_scroll_to_bottom),
-                        modifier = Modifier
-                            .padding(4.dp)
-                    )
-                }
+                Icon(
+                    imageVector = HugeIcons.ArrowUpDouble,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .clickable { scope.launch { state.scrollToItem(0) } }
+                        .padding(4.dp)
+                )
+            }
+            Surface(
+                shape = CircleShape,
+                tonalElevation = 4.dp,
+                color = MaterialTheme.colorScheme.surfaceColorAtElevation(
+                    4.dp
+                )
+            ) {
+                Icon(
+                    imageVector = HugeIcons.ArrowUp01,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .clickable { scope.launch { state.animateScrollToItem(                             (state.firstVisibleItemIndex - 1).fastCoerceAtLeast(                                 0                             )                         ) } }
+                        .padding(4.dp)
+                )
+            }
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceColorAtElevation(
+                    4.dp
+                )
+            ) {
+                Icon(
+                    imageVector = HugeIcons.ArrowDown01,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .clickable { scope.launch { state.animateScrollToItem(state.firstVisibleItemIndex + 1) } }
+                        .padding(4.dp)
+                )
+            }
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceColorAtElevation(
+                    4.dp
+                ),
+            ) {
+                Icon(
+                    imageVector = HugeIcons.ArrowDownDouble,
+                    contentDescription = stringResource(R.string.chat_page_scroll_to_bottom),
+                    modifier = Modifier
+                        .clickable { scope.launch { state.scrollToItem(state.layoutInfo.totalItemsCount - 1) } }
+                        .padding(4.dp)
+                )
             }
         }
     }
