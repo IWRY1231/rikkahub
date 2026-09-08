@@ -284,7 +284,7 @@ private fun FileContentPreview(path: String?, code: String) {
 }
 
 /**
- * 工作空间执行 Shell: 摘要显示退出状态与输出首部, 详情为命令 + stdout/stderr
+ * 工作空间执行 Shell: 摘要不再内联展示退出状态与输出(点击卡片在详情中查看), 详情为命令 + stdout/stderr
  */
 object ShellToolUI : ToolUIRenderer {
     private const val TITLE_MAX_CHARS = 40
@@ -302,39 +302,11 @@ object ShellToolUI : ToolUIRenderer {
         return stringResource(R.string.tool_ui_shell, truncated)
     }
 
-    override fun hasSummary(context: ToolUIContext): Boolean = context.content != null
+    // 执行结果(exit 状态与输出预览)不再内联展示, 点击卡片在 Preview 中查看完整输出
+    override fun hasSummary(context: ToolUIContext): Boolean = false
 
     @Composable
     override fun Summary(context: ToolUIContext) {
-        val content = context.content ?: return
-        val combined = remember(content) {
-            listOf(content.getStringContent("stdout"), content.getStringContent("stderr"))
-                .filterNot { it.isNullOrBlank() }
-                .joinToString("\n")
-                .trim()
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            ShellExitStatus(content, MaterialTheme.typography.labelSmall)
-            if (combined.isNotEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(MaterialTheme.shapes.small)
-                        .background(MaterialTheme.colorScheme.surfaceContainer)
-                        .padding(horizontal = 8.dp, vertical = 6.dp)
-                        .shimmer(isLoading = context.loading),
-                ) {
-                    Text(
-                        text = combined.lineSequence().take(SUMMARY_MAX_LINES).joinToString("\n"),
-                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                        fontSize = 11.sp,
-                        lineHeight = 14.sp,
-                        maxLines = SUMMARY_MAX_LINES,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
     }
 
     @Composable
