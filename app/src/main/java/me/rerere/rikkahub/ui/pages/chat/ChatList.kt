@@ -210,7 +210,7 @@ private fun ChatListNormal(
 ) {
     val scope = rememberCoroutineScope()
     val loadingState by rememberUpdatedState(loading)
-    var isRecentScroll by remember { mutableStateOf(false) }
+    var jumperVisible by remember { mutableStateOf(false) }
     val conversationUpdated by rememberUpdatedState(conversation)
     val density = LocalDensity.current
     val activity = LocalContext.current as? me.rerere.rikkahub.RouteActivity
@@ -289,15 +289,13 @@ private fun ChatListNormal(
             }
         }
 
-        // 判断最近是否滚动
+        // 消息快速跳转按钮: 滚动期间常驻显示, 无操作 5 秒后隐藏
         LaunchedEffect(state.isScrollInProgress) {
             if (state.isScrollInProgress) {
-                isRecentScroll = true
-                delay(1500)
-                isRecentScroll = false
+                jumperVisible = true
             } else {
-                delay(1500)
-                isRecentScroll = false
+                delay(5000)
+                jumperVisible = false
             }
         }
 
@@ -510,7 +508,7 @@ private fun ChatListNormal(
 
             // 消息快速跳转
             MessageJumper(
-                show = isRecentScroll && !state.isScrollInProgress && settings.displaySetting.showMessageJumper && !captureProgress,
+                show = jumperVisible && settings.displaySetting.showMessageJumper && !captureProgress,
                 onLeft = settings.displaySetting.messageJumperOnLeft,
                 scope = scope,
                 state = state
@@ -764,7 +762,7 @@ private fun BoxScope.MessageJumper(
     ) {
         Column(
             modifier = Modifier.padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             Surface(
                 onClick = {
@@ -776,7 +774,7 @@ private fun BoxScope.MessageJumper(
                 tonalElevation = 4.dp,
                 color = MaterialTheme.colorScheme.surfaceColorAtElevation(
                     4.dp
-                ).copy(alpha = 0.65f)
+                ).copy(alpha = 0.8f)
             ) {
                 Icon(
                     imageVector = HugeIcons.ArrowUpDouble,
@@ -799,7 +797,7 @@ private fun BoxScope.MessageJumper(
                 tonalElevation = 4.dp,
                 color = MaterialTheme.colorScheme.surfaceColorAtElevation(
                     4.dp
-                ).copy(alpha = 0.65f)
+                ).copy(alpha = 0.8f)
             ) {
                 Icon(
                     imageVector = HugeIcons.ArrowUp01,
@@ -817,7 +815,7 @@ private fun BoxScope.MessageJumper(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surfaceColorAtElevation(
                     4.dp
-                ).copy(alpha = 0.65f)
+                ).copy(alpha = 0.8f)
             ) {
                 Icon(
                     imageVector = HugeIcons.ArrowDown01,
@@ -835,7 +833,7 @@ private fun BoxScope.MessageJumper(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surfaceColorAtElevation(
                     4.dp
-                ).copy(alpha = 0.65f),
+                ).copy(alpha = 0.8f),
             ) {
                 Icon(
                     imageVector = HugeIcons.ArrowDownDouble,
