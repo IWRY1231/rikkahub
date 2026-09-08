@@ -2,6 +2,7 @@ package me.rerere.rikkahub.ui.pages.chat
 
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -38,6 +39,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
@@ -335,6 +337,17 @@ private fun ChatPageContent(
                 val messageQueue by vm.messageQueue.collectAsStateWithLifecycle()
                 val voiceState by vm.voiceSession.state.collectAsStateWithLifecycle()
                 ChatInput(
+                    modifier = Modifier.pointerInput(chatListState) {
+                        detectTapGestures(
+                            onDoubleTap = {
+                                scope.launch {
+                                    chatListState.scrollToItem(
+                                        chatListState.layoutInfo.totalItemsCount - 1
+                                    )
+                                }
+                            }
+                        )
+                    },
                     onStartVoiceMode = onStartVoiceMode,
                     voiceState = voiceState,
                     onStopVoiceMode = vm.voiceSession::stop,
