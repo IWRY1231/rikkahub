@@ -79,6 +79,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastCoerceAtLeast
 import androidx.compose.ui.zIndex
@@ -511,7 +512,8 @@ private fun ChatListNormal(
                 show = jumperVisible && settings.displaySetting.showMessageJumper && !captureProgress,
                 onLeft = settings.displaySetting.messageJumperOnLeft,
                 scope = scope,
-                state = state
+                state = state,
+                bottomPadding = innerPadding.calculateBottomPadding(),
             )
 
             // Suggestion
@@ -748,11 +750,14 @@ private fun BoxScope.MessageJumper(
     show: Boolean,
     onLeft: Boolean,
     scope: CoroutineScope,
-    state: LazyListState
+    state: LazyListState,
+    bottomPadding: Dp,
 ) {
     AnimatedVisibility(
         visible = show,
-        modifier = Modifier.align(if (onLeft) Alignment.CenterStart else Alignment.CenterEnd),
+        modifier = Modifier
+            .align(if (onLeft) Alignment.BottomStart else Alignment.BottomEnd)
+            .offset(y = -bottomPadding),
         enter = slideInHorizontally(
             initialOffsetX = { if (onLeft) -it * 2 else it * 2 },
         ),
