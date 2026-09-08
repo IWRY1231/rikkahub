@@ -57,6 +57,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -79,7 +80,9 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastCoerceAtLeast
 import androidx.compose.ui.zIndex
@@ -113,6 +116,7 @@ private const val ScrollBottomKey = "ScrollBottomKey"
 @Composable
 fun ChatList(
     innerPadding: PaddingValues,
+    inputTopPx: Int,
     conversation: Conversation,
     state: LazyListState,
     loading: Boolean,
@@ -156,6 +160,7 @@ fun ChatList(
         } else {
             ChatListNormal(
                 innerPadding = innerPadding,
+                inputTopPx = inputTopPx,
                 conversation = conversation,
                 state = state,
                 loading = loading,
@@ -186,6 +191,7 @@ fun ChatList(
 @Composable
 private fun ChatListNormal(
     innerPadding: PaddingValues,
+    inputTopPx: Int,
     conversation: Conversation,
     state: LazyListState,
     loading: Boolean,
@@ -271,9 +277,11 @@ private fun ChatListNormal(
     }
     val lastMessageIndex = conversation.messageNodes.lastIndex
 
+    var listBoxBottomPx by remember { mutableIntStateOf(0) }
     Box(
         modifier = Modifier
-            .fillMaxSize(),
+            .fillMaxSize()
+            .onGloballyPositioned { listBoxBottomPx = it.positionInRoot().y.toInt() + it.size.height }
     ) {
         // 自动滚动到底部
         if (settings.displaySetting.enableAutoScroll) {
@@ -509,11 +517,12 @@ private fun ChatListNormal(
 
             // 消息快速跳转
             MessageJumper(
-                show = jumperVisible && settings.displaySetting.showMessageJumper && !captureProgress,
+                show = jumperVisible && inputTopPx > 0 && settings.displaySetting.showMessageJumper && !captureProgress,
                 onLeft = settings.displaySetting.messageJumperOnLeft,
                 scope = scope,
                 state = state,
-                bottomPadding = innerPadding.calculateBottomPadding(),
+                inputTopPx = inputTopPx,
+                listBoxBottomPx = listBoxBottomPx,
             )
 
             // Suggestion
@@ -751,13 +760,14 @@ private fun BoxScope.MessageJumper(
     onLeft: Boolean,
     scope: CoroutineScope,
     state: LazyListState,
-    bottomPadding: Dp,
+    inputTopPx: Int,
+    listBoxBottomPx: Int,
 ) {
     AnimatedVisibility(
         visible = show,
         modifier = Modifier
             .align(if (onLeft) Alignment.BottomStart else Alignment.BottomEnd)
-            .offset(y = -bottomPadding),
+            .offset { IntOffset(0, -(listBoxBottomPx - inputTopPx)) },
         enter = slideInHorizontally(
             initialOffsetX = { if (onLeft) -it * 2 else it * 2 },
         ),
