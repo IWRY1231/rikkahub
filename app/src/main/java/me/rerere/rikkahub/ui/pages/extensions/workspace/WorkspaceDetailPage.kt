@@ -92,6 +92,7 @@ import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import androidx.compose.ui.res.stringResource
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.ui.components.nav.BackButton
+import me.rerere.rikkahub.ui.components.ui.CardGroup
 import me.rerere.rikkahub.ui.components.ui.ImagePreviewDialog
 import me.rerere.rikkahub.ui.components.ui.RikkaConfirmDialog
 import me.rerere.rikkahub.ui.context.LocalNavController
@@ -116,6 +117,7 @@ fun WorkspaceDetailPage(id: String) {
     val state by vm.state.collectAsStateWithLifecycle()
     val installProgress by vm.installProgress.collectAsStateWithLifecycle()
     val installError by vm.installError.collectAsStateWithLifecycle()
+    val settingsError by vm.settingsError.collectAsStateWithLifecycle()
     val pagerState = rememberPagerState { 2 }
     val scope = rememberCoroutineScope()
     var deleteTarget by remember { mutableStateOf<WorkspaceFileEntry?>(null) }
@@ -214,6 +216,7 @@ fun WorkspaceDetailPage(id: String) {
                     onAndroidLocalAccessChange = vm::setAndroidLocalAccess,
                     onLocalDirectoryChange = vm::setLocalDirectory,
                     onSdcardSubPathChange = vm::setSdcardSubPath,
+                    onShellCompatibilityModeChange = vm::setShellCompatibilityMode,
                 )
 
                 1 -> WorkspaceFilesPage(
@@ -225,6 +228,11 @@ fun WorkspaceDetailPage(id: String) {
                     onOpen = { entry ->
                         when {
                             entry.isDirectory -> vm.open(entry)
+
+                            entry.name.substringAfterLast('.').equals("svg", ignoreCase = true) ->
+                                navController.navigate(
+                                    Screen.WorkspaceFileEditor(id, state.area.name, entry.path)
+                                )
 
                             else -> when (entry.detectFileType()) {
                                 WorkspaceFileType.TEXT -> navController.navigate(
@@ -308,6 +316,19 @@ fun WorkspaceDetailPage(id: String) {
         )
     }
 
+    settingsError?.let { message ->
+        AlertDialog(
+            onDismissRequest = vm::dismissSettingsError,
+            title = { Text(stringResource(R.string.workspace_detail_settings_save_failed)) },
+            text = { Text(message.ifBlank { stringResource(R.string.workspace_detail_settings_save_failed) }) },
+            confirmButton = {
+                TextButton(onClick = vm::dismissSettingsError) {
+                    Text(stringResource(R.string.common_confirm))
+                }
+            },
+        )
+    }
+
     previewImageUri?.let { uri ->
         ImagePreviewDialog(
             images = listOf(uri),
@@ -341,6 +362,7 @@ private fun WorkspaceBasicPage(
     onAndroidLocalAccessChange: (Boolean) -> Unit,
     onLocalDirectoryChange: (String?) -> Unit,
     onSdcardSubPathChange: (String?) -> Unit,
+    onShellCompatibilityModeChange: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     // 手机全部文件访问权限状态, 从系统设置返回后(ON_RESUME)自动刷新
@@ -364,67 +386,107 @@ private fun WorkspaceBasicPage(
         else -> stringResource(R.string.workspace_detail_install_rootfs)
     }
 
+    // /sdcard 挂载子目录显示值与选择器: 从 tree Uri 提取相对路径 primary:Download -> Download;
+    // 选择内置存储根目录(primary:) = 重置为挂载整个 /sdcard
+    val sdcardSubPathDisplay = if (workspace?.sdcardSubPath.isNullOrBlank()) {
+        stringResource(R.string.workspace_detail_sdcard_subpath_default)
+    } else {
+        "/sdcard/${workspace?.sdcardSubPath}"
+    }
+    val sdcardDirPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val docId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull()
+        if (docId == null || !docId.startsWith("primary:")) {
+            Toast.makeText(
+                context,
+                context.getString(R.string.workspace_detail_sdcard_subpath_unsupported),
+                Toast.LENGTH_SHORT,
+            ).show()
+            return@rememberLauncherForActivityResult
+        }
+        val relative = docId.removePrefix("primary:").trim('/')
+        onSdcardSubPathChange(relative.ifBlank { null })
+    }
+    val sdcardTreeInitialUri = remember(workspace?.sdcardSubPath) {
+        runCatching {
+            DocumentsContract.buildDocumentUri(
+                "com.android.externalstorage.documents",
+                "primary:${workspace?.sdcardSubPath.orEmpty().trim('/')}",
+            )
+        }.getOrNull()
+    }
+
+    // 本地目录(/local) SAF 选择器
+    val localDirPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            val resolver = context.contentResolver
+            try {
+                resolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            } catch (e: SecurityException) {
+                Log.w("WorkspaceDetail", "takePersistableUriPermission failed: $uri", e)
+            }
+            onLocalDirectoryChange(uri.toString())
+        }
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CustomColors.cardColorsOnSurfaceContainer,
+            CardGroup(
+                title = { Text(stringResource(R.string.workspace_detail_workspace_info)) },
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.workspace_detail_workspace_info),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    WorkspaceInfoRow(stringResource(R.string.workspace_detail_name), workspace?.name ?: stringResource(R.string.workspace_detail_loading))
-                    WorkspaceInfoRow(stringResource(R.string.workspace_detail_shell_status), workspace?.shellStatus?.toShellStatusLabel() ?: "-")
+                item(
+                    headlineContent = { Text(stringResource(R.string.workspace_detail_name)) },
+                    supportingContent = {
+                        Text(workspace?.name ?: stringResource(R.string.workspace_detail_loading))
+                    },
+                )
+                item(
+                    headlineContent = { Text(stringResource(R.string.workspace_detail_shell_status)) },
+                    supportingContent = { Text(shellStatus?.toShellStatusLabel() ?: "-") },
+                )
 
-                    // Android 本地读写工作区与本地互通（默认开启）
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = stringResource(R.string.workspace_detail_android_local_access),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            Text(
-                                text = stringResource(R.string.workspace_detail_android_local_access_desc),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                // Android 本地读写工作区与本地互通（默认开启）
+                item(
+                    headlineContent = { Text(stringResource(R.string.workspace_detail_android_local_access)) },
+                    supportingContent = {
+                        Text(stringResource(R.string.workspace_detail_android_local_access_desc))
+                    },
+                    trailingContent = {
                         Switch(
                             checked = workspace?.androidLocalAccess ?: true,
                             onCheckedChange = onAndroidLocalAccessChange,
+                            enabled = workspace != null,
                         )
-                    }
+                    },
+                )
 
-                    // 手机全部文件访问权限引导: 授权后 Linux 工作区 AI 可通过 /sdcard 读写手机全部文件
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = stringResource(R.string.workspace_detail_all_files_access),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            Text(
-                                text = stringResource(R.string.workspace_detail_all_files_access_desc),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                // 手机全部文件访问权限引导: 授权后 Linux 工作区 AI 可通过 /sdcard 读写手机全部文件
+                item(
+                    headlineContent = { Text(stringResource(R.string.workspace_detail_all_files_access)) },
+                    supportingContent = {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(stringResource(R.string.workspace_detail_all_files_access_desc))
+                            if (!allFilesGranted) {
+                                Text(
+                                    text = stringResource(R.string.workspace_detail_all_files_access_restart),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
                         }
+                    },
+                    trailingContent = {
                         TextButton(
                             onClick = {
                                 context.openAllFilesAccessSettings()
@@ -440,132 +502,67 @@ private fun WorkspaceBasicPage(
                                 )
                             )
                         }
-                    }
-                    if (!allFilesGranted) {
-                        Text(
-                            text = stringResource(R.string.workspace_detail_all_files_access_restart),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
+                    },
+                )
 
-                    // /sdcard 挂载子目录(直连模式): 通过系统目录选择器选择, 默认挂载整盘
-                    val sdcardSubPathDisplay = if (workspace?.sdcardSubPath.isNullOrBlank()) {
-                        stringResource(R.string.workspace_detail_sdcard_subpath_default)
-                    } else {
-                        "/sdcard/${workspace?.sdcardSubPath}"
-                    }
-                    val sdcardDirPicker = rememberLauncherForActivityResult(
-                        contract = ActivityResultContracts.OpenDocumentTree()
-                    ) { uri ->
-                        if (uri == null) return@rememberLauncherForActivityResult
-                        // 从 tree Uri 提取相对路径: primary:Download → Download;
-                        // 选择内置存储根目录(primary:) = 重置为挂载整个 /sdcard
-                        val docId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull()
-                        if (docId == null || !docId.startsWith("primary:")) {
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.workspace_detail_sdcard_subpath_unsupported),
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                            return@rememberLauncherForActivityResult
-                        }
-                        val relative = docId.removePrefix("primary:").trim('/')
-                        onSdcardSubPathChange(relative.ifBlank { null })
-                    }
-                    val sdcardTreeInitialUri = remember(workspace?.sdcardSubPath) {
-                        runCatching {
-                            DocumentsContract.buildDocumentUri(
-                                "com.android.externalstorage.documents",
-                                "primary:${workspace?.sdcardSubPath.orEmpty().trim('/')}",
-                            )
-                        }.getOrNull()
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = stringResource(R.string.workspace_detail_sdcard_subpath),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            Text(
-                                text = sdcardSubPathDisplay,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            CompositionLocalProvider(LocalMinimumInteractiveComponentEnforcement provides false) {
-                                Column(
-                                    horizontalAlignment = Alignment.End,
-                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                // /sdcard 挂载子目录(直连模式): 通过系统目录选择器选择, 默认挂载整盘
+                item(
+                    headlineContent = { Text(stringResource(R.string.workspace_detail_sdcard_subpath)) },
+                    supportingContent = { Text(sdcardSubPathDisplay) },
+                    trailingContent = {
+                        CompositionLocalProvider(LocalMinimumInteractiveComponentEnforcement provides false) {
+                            Column(
+                                horizontalAlignment = Alignment.End,
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                TextButton(
+                                    onClick = { sdcardDirPicker.launch(sdcardTreeInitialUri) },
+                                    modifier = Modifier.height(28.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                                 ) {
+                                    Text(
+                                        stringResource(R.string.workspace_detail_sdcard_subpath_pick),
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                }
+                                if (!workspace?.sdcardSubPath.isNullOrBlank()) {
                                     TextButton(
-                                        onClick = { sdcardDirPicker.launch(sdcardTreeInitialUri) },
+                                        onClick = { onSdcardSubPathChange(null) },
                                         modifier = Modifier.height(28.dp),
                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                                     ) {
                                         Text(
-                                            stringResource(R.string.workspace_detail_sdcard_subpath_pick),
+                                            stringResource(R.string.workspace_detail_sdcard_subpath_reset),
                                             style = MaterialTheme.typography.labelMedium,
                                         )
-                                    }
-                                    if (!workspace?.sdcardSubPath.isNullOrBlank()) {
-                                        TextButton(
-                                            onClick = { onSdcardSubPathChange(null) },
-                                            modifier = Modifier.height(28.dp),
-                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                                        ) {
-                                            Text(
-                                                stringResource(R.string.workspace_detail_sdcard_subpath_reset),
-                                                style = MaterialTheme.typography.labelMedium,
-                                            )
-                                        }
                                     }
                                 }
                             }
                         }
-                    }
+                    },
+                )
 
-                    // 本地目录互通: SAF 目录授权, 挂载为 /local, 不依赖「所有文件访问」权限
-                    HorizontalDivider()
-                    val localDirPicker = rememberLauncherForActivityResult(
-                        contract = ActivityResultContracts.OpenDocumentTree()
-                    ) { uri ->
-                        if (uri != null) {
-                            val resolver = context.contentResolver
-                            try {
-                                resolver.takePersistableUriPermission(
-                                    uri,
-                                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-                                )
-                            } catch (e: SecurityException) {
-                                Log.w("WorkspaceDetail", "takePersistableUriPermission failed: $uri", e)
-                            }
-                            onLocalDirectoryChange(uri.toString())
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = stringResource(R.string.workspace_detail_local_directory),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
+                // 本地目录互通: SAF 目录授权, 挂载为 /local, 不依赖「所有文件访问」权限
+                item(
+                    headlineContent = { Text(stringResource(R.string.workspace_detail_local_directory)) },
+                    supportingContent = {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(
                                 text = if (workspace?.localDirectoryUri.isNullOrBlank()) {
                                     stringResource(R.string.workspace_detail_local_directory_desc)
                                 } else {
                                     stringResource(R.string.workspace_detail_local_directory_set)
                                 },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            if (!workspace?.localDirectoryUri.isNullOrBlank()) {
+                                Text(
+                                    text = stringResource(R.string.workspace_detail_local_directory_note),
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
                         }
+                    },
+                    trailingContent = {
                         if (workspace?.localDirectoryUri.isNullOrBlank()) {
                             TextButton(onClick = { localDirPicker.launch(null) }) {
                                 Text(stringResource(R.string.workspace_detail_local_directory_pick))
@@ -575,55 +572,65 @@ private fun WorkspaceBasicPage(
                                 Text(stringResource(R.string.workspace_detail_local_directory_clear))
                             }
                         }
-                    }
-                    if (!workspace?.localDirectoryUri.isNullOrBlank()) {
-                        Text(
-                            text = stringResource(R.string.workspace_detail_local_directory_note),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                }
+                    },
+                )
             }
         }
 
         item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CustomColors.cardColorsOnSurfaceContainer,
+            CardGroup(
+                title = { Text(stringResource(R.string.workspace_detail_enable_shell)) },
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.workspace_detail_enable_shell),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                        text = stringResource(R.string.workspace_detail_enable_shell_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                item(
+                    headlineContent = {
+                        Text(stringResource(R.string.workspace_detail_enable_shell_desc))
+                    },
+                    supportingContent = {
+                        Column(
+                            modifier = Modifier.padding(top = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Button(
+                                onClick = onInstallRootfs,
+                                enabled = workspace != null && !installing,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(HugeIcons.Bash, contentDescription = null)
+                                Text(
+                                    text = installButtonText,
+                                    modifier = Modifier.padding(start = 8.dp),
+                                )
+                            }
+                            installProgress?.let { RootfsProgress(it) }
+                        }
+                    },
+                )
+            }
+        }
 
-                    Button(
-                        onClick = onInstallRootfs,
-                        enabled = workspace != null && !installing,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(HugeIcons.Bash, contentDescription = null)
+        item {
+            CardGroup(
+                title = {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(stringResource(R.string.workspace_detail_compatibility_mode))
                         Text(
-                            text = installButtonText,
-                            modifier = Modifier.padding(start = 8.dp),
+                            text = stringResource(R.string.workspace_detail_compatibility_mode_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-
-                    installProgress?.let { progress ->
-                        RootfsProgress(progress)
-                    }
-                }
+                },
+            ) {
+                item(
+                    headlineContent = { Text(stringResource(R.string.workspace_detail_compatibility_mode)) },
+                    trailingContent = {
+                        Switch(
+                            checked = workspace?.shellCompatibilityMode ?: false,
+                            onCheckedChange = onShellCompatibilityModeChange,
+                            enabled = workspace != null,
+                        )
+                    },
+                )
             }
         }
 
@@ -642,58 +649,38 @@ private fun WorkspaceToolApprovalCard(
     onToolApprovalChange: (String, Boolean) -> Unit,
 ) {
     val overrides = workspace?.toolApprovalOverrides().orEmpty()
+    val tools = workspaceToolApprovalItems()
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CustomColors.cardColorsOnSurfaceContainer,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
+    CardGroup(
+        title = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = stringResource(R.string.workspace_detail_tool_approval),
-                    style = MaterialTheme.typography.titleMedium,
-                )
+                Text(stringResource(R.string.workspace_detail_tool_approval))
                 Text(
                     text = stringResource(R.string.workspace_detail_tool_approval_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-
-            workspaceToolApprovalItems().forEach { (toolName, label) ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Text(
-                            text = toolName,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
+        },
+    ) {
+        tools.forEach { (toolName, label) ->
+            item(
+                headlineContent = { Text(label) },
+                supportingContent = {
+                    Text(
+                        text = toolName,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
+                trailingContent = {
                     Switch(
                         checked = resolveWorkspaceToolApproval(toolName, overrides),
                         onCheckedChange = { onToolApprovalChange(toolName, it) },
                         enabled = workspace != null,
                     )
-                }
-            }
+                },
+            )
         }
     }
 }
@@ -705,34 +692,6 @@ private fun workspaceToolApprovalItems() = listOf(
     "workspace_edit_file" to stringResource(R.string.workspace_detail_tool_edit_file),
     "workspace_shell" to stringResource(R.string.workspace_detail_tool_shell),
 )
-
-@Composable
-private fun WorkspaceInfoRow(
-    label: String,
-    value: String,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            modifier = Modifier.weight(0.35f),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = value,
-            modifier = Modifier.weight(0.65f),
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
 
 @Composable
 private fun RootfsProgress(progress: RootfsInstallProgress) {

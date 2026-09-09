@@ -44,6 +44,10 @@ data class WorkspaceEntity(
     // 空 = 挂载整个 /sdcard。需要「所有文件访问」权限。
     @ColumnInfo("sdcard_subpath")
     val sdcardSubPath: String? = null,
+    // Shell 兼容模式（上游 2.5.1）：proot 启动时设置 PROOT_NO_SECCOMP=1，
+    // 用于部分 ROM seccomp 不兼容导致容器无法启动的场景
+    @ColumnInfo("shell_compatibility_mode", defaultValue = "0")
+    val shellCompatibilityMode: Boolean = false,
 ) {
     fun toolApprovalOverrides(): Map<String, Boolean> = runCatching {
         JsonInstant.decodeFromString<Map<String, Boolean>>(toolApprovals)

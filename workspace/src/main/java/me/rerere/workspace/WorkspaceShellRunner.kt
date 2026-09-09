@@ -24,6 +24,8 @@ data class WorkspaceShellContext(
     val extraBindMounts: List<WorkspaceBindMount> = emptyList(),
     /** /sdcard 部分挂载的目标(如 /sdcard/Download/Agent); null = 未启用或整盘 */
     val sdcardMountTarget: String? = null,
+    /** Shell 兼容模式(上游 2.5.1): proot 启动时设置 PROOT_NO_SECCOMP=1 */
+    val shellCompatibilityMode: Boolean = false,
 )
 
 class HostShellRunner : WorkspaceShellRunner {

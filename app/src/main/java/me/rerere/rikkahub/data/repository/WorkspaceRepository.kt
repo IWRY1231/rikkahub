@@ -106,6 +106,10 @@ class WorkspaceRepository(
         return dao.getAll().any { it.id != excludeId && it.name.trim() == target }
     }
 
+    suspend fun setShellCompatibilityMode(id: String, enabled: Boolean) {
+        dao.setShellCompatibilityMode(id, enabled, System.currentTimeMillis())
+    }
+
     suspend fun setToolApproval(id: String, toolName: String, needsApproval: Boolean): Boolean {
         val workspace = dao.getById(id) ?: return false
         val overrides = workspace.toolApprovalOverrides() + (toolName to needsApproval)
@@ -454,6 +458,7 @@ class WorkspaceRepository(
                 stdin,
                 includeAndroidLocal = workspace.androidLocalAccess,
                 extraBindMounts = extraBindMounts,
+                shellCompatibilityMode = workspace.shellCompatibilityMode,
             )
         }
         if (localUri != null) {

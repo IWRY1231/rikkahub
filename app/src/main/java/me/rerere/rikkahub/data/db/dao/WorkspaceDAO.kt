@@ -36,6 +36,9 @@ interface WorkspaceDAO {
     @Query("SELECT * FROM workspaces WHERE root = :root LIMIT 1")
     suspend fun getByRoot(root: String): WorkspaceEntity?
 
+    @Query("UPDATE workspaces SET shell_compatibility_mode = :enabled, updated_at = :updatedAt WHERE id = :id")
+    suspend fun setShellCompatibilityMode(id: String, enabled: Boolean, updatedAt: Long): Int
+
     @Query("DELETE FROM workspaces WHERE id = :id")
     suspend fun deleteById(id: String): Int
 }

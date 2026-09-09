@@ -298,6 +298,7 @@ class WorkspaceManager(
         stdin: ByteArray? = null,
         includeAndroidLocal: Boolean = true,
         extraBindMounts: List<WorkspaceBindMount> = emptyList(),
+        shellCompatibilityMode: Boolean = false,
     ): WorkspaceCommandResult {
         require(command.isNotBlank()) { "Command is required" }
         val workingDir = fileSystem.resolve(filesDir(root), cwd)
@@ -329,6 +330,7 @@ class WorkspaceManager(
                 bindMounts = effectiveBindMounts,
                 extraBindMounts = extraBindMounts,
                 sdcardMountTarget = sdcardTarget,
+                shellCompatibilityMode = shellCompatibilityMode,
             )
         )
         // 事后兜底: 清理穿越进占位目录的文件, 并把清理结果回告 AI(静默失效 -> 显式反馈)
