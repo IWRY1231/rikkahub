@@ -79,6 +79,7 @@ import me.rerere.rikkahub.utils.toDp
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
+import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 import org.intellij.markdown.html.HtmlGenerator
 import org.intellij.markdown.parser.MarkdownParser
 import org.jsoup.Jsoup
@@ -115,20 +116,38 @@ private val flavour by lazy {
 private val parser by lazy { MarkdownParser(flavour) }
 
 private const val RANGE_TILDE_PLACEHOLDER = '\u0001'
+private const val AUTOLINK_TAIL_PLACEHOLDER = '\u0002'
+
+private val AUTOLINK_TAIL_PLACEHOLDER_REGEX = Regex("\u0002(\\d+)\u0002")
 
 private fun generateMarkdownHtml(content: String): String {
     val preprocessed = preProcess(content)
     val tree = parser.buildMarkdownTreeFromString(preprocessed)
     val neutralized = neutralizeRangeLikeStrikeThrough(preprocessed, tree)
-    if (neutralized == preprocessed) {
-        return HtmlGenerator(preprocessed, tree, flavour).generateHtml()
+    val tildeTree = if (neutralized != preprocessed) {
+        parser.buildMarkdownTreeFromString(neutralized)
+    } else {
+        tree
     }
-    // 占位符使区间 '~' 不再被识别为删除线定界符, HTML 生成后还原为字面 '~'
-    return HtmlGenerator(
-        neutralized,
-        parser.buildMarkdownTreeFromString(neutralized),
-        flavour
-    ).generateHtml().replace(RANGE_TILDE_PLACEHOLDER, '~')
+    // autolink 尾部守卫: 把 GFM_AUTOLINK 吞掉的尾部文本换成占位符,
+    // 使链接只含严格 URL 前缀, HTML 生成后占位符还原为普通文本
+    val (repaired, autolinkTails) = repairGfmAutolinkTails(neutralized, tildeTree)
+    val finalTree = if (repaired != neutralized) {
+        parser.buildMarkdownTreeFromString(repaired)
+    } else {
+        tildeTree
+    }
+    var result = HtmlGenerator(repaired, finalTree, flavour).generateHtml()
+    if (autolinkTails.isNotEmpty()) {
+        result = AUTOLINK_TAIL_PLACEHOLDER_REGEX.replace(result) { match ->
+            escapeHtmlPlainText(autolinkTails[match.groupValues[1].toInt()])
+        }
+    }
+    if (neutralized != preprocessed) {
+        // 占位符使区间 '~' 不再被识别为删除线定界符, HTML 生成后还原为字面 '~'
+        result = result.replace(RANGE_TILDE_PLACEHOLDER, '~')
+    }
+    return result
 }
 
 /**
@@ -153,6 +172,37 @@ private fun neutralizeRangeLikeStrikeThrough(content: String, tree: ASTNode): St
     }
     return sb.toString()
 }
+
+/**
+ * GFM_AUTOLINK 吞字守卫: 库的裸链接词法允许反引号/全角标点/CJK 等一切非空白字符,
+ * URL 后紧跟的说明文字会被吞进链接。找出全部 GFM_AUTOLINK 节点, 把严格 URL 前缀
+ * 之后的尾部替换为占位符(HTML 生成后还原为普通文本), 使链接只含严格 URL。
+ */
+private fun repairGfmAutolinkTails(content: String, tree: ASTNode): Pair<String, List<String>> {
+    val tails = mutableListOf<String>()
+    val ranges = mutableListOf<IntRange>()
+    fun walk(node: ASTNode) {
+        if (node.type == GFMTokenTypes.GFM_AUTOLINK) {
+            val token = content.substring(node.startOffset, node.endOffset)
+            val (prefix, tail) = splitGfmAutolinkText(token)
+            if (tail.isNotEmpty()) {
+                tails.add(tail)
+                ranges.add(node.startOffset + prefix.length until node.endOffset)
+            }
+        }
+        node.children.forEach { walk(it) }
+    }
+    walk(tree)
+    if (tails.isEmpty()) return content to tails
+    val sb = StringBuilder(content)
+    for (i in tails.indices.reversed()) {
+        val range = ranges[i]
+        sb.replace(range.first, range.last + 1, "$AUTOLINK_TAIL_PLACEHOLDER${i}$AUTOLINK_TAIL_PLACEHOLDER")
+    }
+    return sb.toString() to tails
+}
+
+private fun escapeHtmlPlainText(text: String): String = text.replace("&", "&amp;")
 
 // ---- Main composable ----
 

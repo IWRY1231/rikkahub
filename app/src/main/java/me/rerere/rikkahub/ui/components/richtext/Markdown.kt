@@ -127,6 +127,49 @@ private val CODE_BLOCK_REGEX = Regex("```[\\s\\S]*?```|`[^`\n]*`", RegexOption.D
 private val BREAK_LINE_REGEX = Regex("(?i)<br\\s*/?>")
 private val LATEX_BLOCK_LINE_BREAK_REGEX = Regex("""[ \t]*\r?\n[ \t]*""")
 
+// ---- GFM_AUTOLINK 边界守卫 ----
+// rikkahub/markdown 的 GFM 裸链接词法(PATH_PART=[\S&&[^\]()<])允许反引号/全角标点/CJK 等
+// 一切非空白字符, URL 后紧跟的说明文字会被吞进链接(直到 ASCII 空白/行尾),
+// pushbackAutolink 的修剪表也只含 ASCII 标点。渲染层按严格 URL 前缀切分:
+// 链接只保留严格前缀, 余下文本按普通文本渲染; CJK 汉字在 URL 内部仍视为合法(维基式路径)。
+private val AUTOLINK_SCHEME_REGEX = Regex("^(?:(?:https?|ftp|file)://|www\\.)")
+
+private fun isAutolinkBreakChar(c: Char): Boolean {
+    return c.isWhitespace() ||
+        c == '`' || c == '[' || c == ']' || c == '<' || c == '>' ||
+        c == '\u00A0' ||
+        c in '\u2000'..'\u206F' ||   // 通用标点(… — ‘ ’ “ ” 等)
+        c in '\u2E80'..'\u2EFF' ||   // CJK 部首补充
+        c in '\u3000'..'\u303F' ||   // CJK 符号标点(、。〈〉《》「」【】・全角空格)
+        c in '\uFE30'..'\uFE4F' ||   // CJK 兼容形式
+        c in '\uFF00'..'\uFFEF'      // 全角形式(！？：；（）【】～等)
+}
+
+internal fun splitGfmAutolinkText(text: String): Pair<String, String> {
+    val schemeEnd = AUTOLINK_SCHEME_REGEX.find(text)?.value?.length ?: return text to ""
+    var depth = 0
+    var i = schemeEnd
+    while (i < text.length) {
+        val c = text[i]
+        if (isAutolinkBreakChar(c)) break
+        if (c == '(') {
+            depth++
+        } else if (c == ')') {
+            if (depth == 0) break
+            depth--
+        }
+        i++
+    }
+    if (i >= text.length) return text to ""
+    var end = i
+    // 早停在括号组内时回退未闭合的 "(", 保证链接前缀括号配平
+    while (depth > 0 && end > schemeEnd && text[end - 1] == '(') {
+        end--
+        depth--
+    }
+    return if (end == text.length) text to "" else text.substring(0, end) to text.substring(end)
+}
+
 // 预处理markdown内容
 private fun preProcess(content: String): String {
     // 先找出所有代码块的位置
@@ -1011,10 +1054,15 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
 
         node.type == GFMTokenTypes.GFM_AUTOLINK -> {
             val link = node.getTextInNode(content)
-            withLink(LinkAnnotation.Url(link)) {
+            val (url, tail) = splitGfmAutolinkText(link)
+            withLink(LinkAnnotation.Url(url)) {
                 withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
-                    append(link)
+                    append(url)
                 }
+            }
+            // URL 后被库吞进链接的文本按普通文本渲染(见 splitGfmAutolinkText 注释)
+            if (tail.isNotEmpty()) {
+                append(tail)
             }
         }
 
