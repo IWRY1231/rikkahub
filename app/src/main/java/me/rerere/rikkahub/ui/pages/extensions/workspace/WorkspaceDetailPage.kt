@@ -457,10 +457,21 @@ private fun WorkspaceBasicPage(
                 )
 
                 // Android 本地读写工作区与本地互通（默认开启）
+                // 注: 文案放 headline 槽而非 supporting — 多行 supporting 会触发 ListItem
+                // ThreeLine 分支, trailing(开关)被顶对齐而非垂直居中(m3 1.5.0-alpha27)
                 item(
-                    headlineContent = { Text(stringResource(R.string.workspace_detail_android_local_access)) },
-                    supportingContent = {
-                        Text(stringResource(R.string.workspace_detail_android_local_access_desc))
+                    headlineContent = {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = stringResource(R.string.workspace_detail_android_local_access),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                text = stringResource(R.string.workspace_detail_android_local_access_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     },
                     trailingContent = {
                         Switch(
@@ -473,10 +484,17 @@ private fun WorkspaceBasicPage(
 
                 // 手机全部文件访问权限引导: 授权后 Linux 工作区 AI 可通过 /sdcard 读写手机全部文件
                 item(
-                    headlineContent = { Text(stringResource(R.string.workspace_detail_all_files_access)) },
-                    supportingContent = {
+                    headlineContent = {
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(stringResource(R.string.workspace_detail_all_files_access_desc))
+                            Text(
+                                text = stringResource(R.string.workspace_detail_all_files_access),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                text = stringResource(R.string.workspace_detail_all_files_access_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                             if (!allFilesGranted) {
                                 Text(
                                     text = stringResource(R.string.workspace_detail_all_files_access_restart),
@@ -507,8 +525,19 @@ private fun WorkspaceBasicPage(
 
                 // /sdcard 挂载子目录(直连模式): 通过系统目录选择器选择, 默认挂载整盘
                 item(
-                    headlineContent = { Text(stringResource(R.string.workspace_detail_sdcard_subpath)) },
-                    supportingContent = { Text(sdcardSubPathDisplay) },
+                    headlineContent = {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = stringResource(R.string.workspace_detail_sdcard_subpath),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                text = sdcardSubPathDisplay,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
                     trailingContent = {
                         CompositionLocalProvider(LocalMinimumInteractiveComponentEnforcement provides false) {
                             Column(
@@ -544,19 +573,25 @@ private fun WorkspaceBasicPage(
 
                 // 本地目录互通: SAF 目录授权, 挂载为 /local, 不依赖「所有文件访问」权限
                 item(
-                    headlineContent = { Text(stringResource(R.string.workspace_detail_local_directory)) },
-                    supportingContent = {
+                    headlineContent = {
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = stringResource(R.string.workspace_detail_local_directory),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
                             Text(
                                 text = if (workspace?.localDirectoryUri.isNullOrBlank()) {
                                     stringResource(R.string.workspace_detail_local_directory_desc)
                                 } else {
                                     stringResource(R.string.workspace_detail_local_directory_set)
                                 },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             if (!workspace?.localDirectoryUri.isNullOrBlank()) {
                                 Text(
                                     text = stringResource(R.string.workspace_detail_local_directory_note),
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.primary,
                                 )
                             }
