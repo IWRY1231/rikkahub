@@ -4,6 +4,7 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
@@ -14,12 +15,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
@@ -46,6 +49,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -195,6 +199,7 @@ internal fun ModelSelectorButton(
     onlyIcon: Boolean = false,
     allowClear: Boolean = false,
     onClear: () -> Unit = {},
+    onLongClick: (() -> Unit)? = null,
 ) {
     val model = state.currentModel
 
@@ -235,11 +240,7 @@ internal fun ModelSelectorButton(
             }
         }
     } else {
-        IconButton(
-            onClick = {
-                state.open()
-            },
-        ) {
+        val iconContent: @Composable () -> Unit = {
             if (model != null) {
                 AutoAIIcon(
                     modifier = Modifier.size(36.dp),
@@ -252,6 +253,31 @@ internal fun ModelSelectorButton(
                     contentDescription = stringResource(R.string.setting_model_page_chat_model),
                     modifier = Modifier.size(20.dp)
                 )
+            }
+        }
+        if (onLongClick != null) {
+            // 长按进提供商设置: combinedClickable 同时承载单击(开模型选择)与长按;
+            // 触控目标/视觉与 IconButton 对齐(48dp 触控 + 40dp 圆形波纹区)
+            Box(
+                modifier = modifier
+                    .minimumInteractiveComponentSize()
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .combinedClickable(
+                        onClick = { state.open() },
+                        onLongClick = onLongClick,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                iconContent()
+            }
+        } else {
+            IconButton(
+                onClick = {
+                    state.open()
+                },
+            ) {
+                iconContent()
             }
         }
     }

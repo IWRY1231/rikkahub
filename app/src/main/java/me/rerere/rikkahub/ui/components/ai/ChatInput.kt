@@ -147,6 +147,7 @@ fun ChatInput(
     voiceState: VoiceSessionState = VoiceSessionState(),
     onStopVoiceMode: () -> Unit = {},
     onBlankDoubleTap: (() -> Unit)? = null,
+    onModelSelectorLongClick: (() -> Unit)? = null,
 ) {
     val toaster = LocalToaster.current
     val assistant = settings.getCurrentAssistant()
@@ -293,6 +294,7 @@ fun ChatInput(
                                 state = modelListState,
                                 onlyIcon = true,
                                 modifier = Modifier,
+                                onLongClick = onModelSelectorLongClick,
                             )
 
                             // Search
