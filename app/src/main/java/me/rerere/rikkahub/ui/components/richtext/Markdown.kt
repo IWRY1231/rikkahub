@@ -145,10 +145,11 @@ private fun isAutolinkBreakChar(c: Char): Boolean {
         c in '\uFF00'..'\uFFEF'      // 全角形式(！？：；（）【】～等)
 }
 
-internal fun splitGfmAutolinkText(text: String): Pair<String, String> {
-    val schemeEnd = AUTOLINK_SCHEME_REGEX.find(text)?.value?.length ?: return text to ""
+internal fun splitGfmAutolinkText(text: String): Triple<String, String, String> {
+    val match = AUTOLINK_SCHEME_REGEX.find(text) ?: return Triple(text, "", "")
+    val schemeStart = match.range.first
     var depth = 0
-    var i = schemeEnd
+    var i = match.range.last + 1
     while (i < text.length) {
         val c = text[i]
         if (isAutolinkBreakChar(c)) break
@@ -160,14 +161,17 @@ internal fun splitGfmAutolinkText(text: String): Pair<String, String> {
         }
         i++
     }
-    if (i >= text.length) return text to ""
     var end = i
     // 早停在括号组内时回退未闭合的 "(", 保证链接前缀括号配平
-    while (depth > 0 && end > schemeEnd && text[end - 1] == '(') {
+    while (depth > 0 && end > schemeStart && text[end - 1] == '(') {
         end--
         depth--
     }
-    return if (end == text.length) text to "" else text.substring(0, end) to text.substring(end)
+    return Triple(
+        text.substring(0, schemeStart),
+        text.substring(schemeStart, end),
+        text.substring(end),
+    )
 }
 
 // 预处理markdown内容
@@ -620,9 +624,25 @@ private fun MarkdownNode(
 
         MarkdownElementTypes.CODE_SPAN -> {
             val code = node.getTextInNode(content).trim('`')
-            Text(
-                text = code, fontFamily = JetbrainsMono, modifier = modifier
-            )
+            val (before, url, tail) = splitGfmAutolinkText(code)
+            if (tail.isEmpty()) {
+                Text(
+                    text = code, fontFamily = JetbrainsMono, modifier = modifier
+                )
+            } else {
+                // 吞字守卫(同 inline 版): URL 部分可点, 尾部按普通文本输出
+                Text(
+                    text = buildAnnotatedString {
+                        append(before)
+                        withLink(LinkAnnotation.Url(url)) {
+                            append(url)
+                        }
+                        append(tail)
+                    },
+                    fontFamily = JetbrainsMono,
+                    modifier = modifier,
+                )
+            }
         }
 
         MarkdownElementTypes.CODE_BLOCK -> {
@@ -1054,7 +1074,7 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
 
         node.type == GFMTokenTypes.GFM_AUTOLINK -> {
             val link = node.getTextInNode(content)
-            val (url, tail) = splitGfmAutolinkText(link)
+            val (_, url, tail) = splitGfmAutolinkText(link)
             withLink(LinkAnnotation.Url(url)) {
                 withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
                     append(url)
@@ -1218,15 +1238,32 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
 
         node.type == MarkdownElementTypes.CODE_SPAN -> {
             val code = node.getTextInNode(content).trim('`')
-            withStyle(
-                SpanStyle(
-                    fontFamily = JetbrainsMono,
-                    fontSize = 0.9.em,
-                    color = colorScheme.primary,
-                )
-            ) {
-                append(' ')
-                append(code)
+            val (before, url, tail) = splitGfmAutolinkText(code)
+            val codeStyle = SpanStyle(
+                fontFamily = JetbrainsMono,
+                fontSize = 0.9.em,
+                color = colorScheme.primary,
+            )
+            if (tail.isEmpty()) {
+                withStyle(codeStyle) {
+                    append(' ')
+                    append(code)
+                    append(' ')
+                }
+            } else {
+                // 吞字守卫: URL 被反引号包裹且后跟文字时, autolink 会吞掉收尾反引号,
+                // 使反引号跨内容错配成 code span 把 URL 与后续文字包在一起。
+                // 这里把严格 URL 部分渲染为链接, 尾部还原为普通文本
+                withStyle(codeStyle) {
+                    append(' ')
+                    append(before)
+                }
+                withLink(LinkAnnotation.Url(url)) {
+                    withStyle(codeStyle) {
+                        append(url)
+                    }
+                }
+                append(tail)
                 append(' ')
             }
         }

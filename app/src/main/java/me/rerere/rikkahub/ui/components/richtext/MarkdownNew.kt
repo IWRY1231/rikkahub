@@ -118,7 +118,7 @@ private val parser by lazy { MarkdownParser(flavour) }
 private const val RANGE_TILDE_PLACEHOLDER = '\u0001'
 private const val AUTOLINK_TAIL_PLACEHOLDER = '\u0002'
 
-private val AUTOLINK_TAIL_PLACEHOLDER_REGEX = Regex("\u0002(\\d+)\u0002")
+private val AUTOLINK_TAIL_PLACEHOLDER_REGEX = Regex(" \u0002(\\d+)\u0002")
 
 private fun generateMarkdownHtml(content: String): String {
     val preprocessed = preProcess(content)
@@ -184,7 +184,7 @@ private fun repairGfmAutolinkTails(content: String, tree: ASTNode): Pair<String,
     fun walk(node: ASTNode) {
         if (node.type == GFMTokenTypes.GFM_AUTOLINK) {
             val token = content.substring(node.startOffset, node.endOffset)
-            val (prefix, tail) = splitGfmAutolinkText(token)
+            val (_, prefix, tail) = splitGfmAutolinkText(token)
             if (tail.isNotEmpty()) {
                 tails.add(tail)
                 ranges.add(node.startOffset + prefix.length until node.endOffset)
@@ -197,7 +197,8 @@ private fun repairGfmAutolinkTails(content: String, tree: ASTNode): Pair<String,
     val sb = StringBuilder(content)
     for (i in tails.indices.reversed()) {
         val range = ranges[i]
-        sb.replace(range.first, range.last + 1, "$AUTOLINK_TAIL_PLACEHOLDER${i}$AUTOLINK_TAIL_PLACEHOLDER")
+        // 前置空格: \u0002 属于 \S, 会被 autolink 词法再次吞进链接; 空格迫使 token 在 URL 后终止
+        sb.replace(range.first, range.last + 1, " $AUTOLINK_TAIL_PLACEHOLDER${i}$AUTOLINK_TAIL_PLACEHOLDER")
     }
     return sb.toString() to tails
 }
