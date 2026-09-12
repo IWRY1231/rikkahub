@@ -769,7 +769,7 @@ private fun BoxScope.MessageJumper(
                 tonalElevation = 4.dp,
                 color = MaterialTheme.colorScheme.surfaceColorAtElevation(
                     4.dp
-                )
+                ).copy(alpha = 0.65f)
             ) {
                 Icon(
                     imageVector = HugeIcons.ArrowUpDouble,
@@ -784,7 +784,7 @@ private fun BoxScope.MessageJumper(
                 tonalElevation = 4.dp,
                 color = MaterialTheme.colorScheme.surfaceColorAtElevation(
                     4.dp
-                )
+                ).copy(alpha = 0.65f)
             ) {
                 Icon(
                     imageVector = HugeIcons.ArrowUp01,
@@ -806,7 +806,7 @@ private fun BoxScope.MessageJumper(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surfaceColorAtElevation(
                     4.dp
-                )
+                ).copy(alpha = 0.65f)
             ) {
                 Icon(
                     imageVector = HugeIcons.ArrowDown01,
@@ -820,7 +820,7 @@ private fun BoxScope.MessageJumper(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surfaceColorAtElevation(
                     4.dp
-                ),
+                ).copy(alpha = 0.65f),
             ) {
                 Icon(
                     imageVector = HugeIcons.ArrowDownDouble,
