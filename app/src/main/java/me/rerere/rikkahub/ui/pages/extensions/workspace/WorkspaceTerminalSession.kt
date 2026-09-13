@@ -55,8 +55,12 @@ internal fun createWorkspaceTerminalSession(
     // 与 AI 命令执行共用同一份 Android 本地挂载表, 保证 /skills、/tool_outputs、/upload、
     // /sdcard 在终端与工具中行为一致（本地互通恒开启, 无开关判定）
     args += buildBindMountArgs(WorkspaceMounts.androidLocalMounts(appContext))
-    WorkspaceMounts.sdcardMount(sdcardSubPath)?.let { sdcard ->
-        args += buildBindMountArgs(listOf(sdcard))
+    // 未授予「所有文件访问」时同样撤下 /sdcard 挂载: 留一个"看得见但读不出"的空目录
+    // 只会让人/模型误判成"手机里没东西"（原因写在 rootfs 的 MOUNT_NOTICE.txt 里）
+    if (WorkspaceMounts.allFilesAccessGranted(appContext)) {
+        WorkspaceMounts.sdcardMount(sdcardSubPath)?.let { sdcard ->
+            args += buildBindMountArgs(listOf(sdcard))
+        }
     }
     listOf("/dev", "/proc", "/sys").forEach { path ->
         if (File(path).exists()) {
@@ -115,10 +119,16 @@ internal suspend fun prepareWorkspaceTerminalSession(
         linuxDir,
         RootfsPatchOptions(nameservers = appContext.activeDnsServers())
     )
-    // /sdcard 部分挂载时写入 MOUNT_NOTICE 告示(交互式终端为软提示; AI 命令走硬拦截包装器)
+    // /sdcard 占位目录告示(交互式终端为软提示; AI 命令走硬拦截包装器):
+    // 部分挂载写"仅子目录可用"; 权限未授予写明确原因 —— 避免"看到空目录却不知为何"
     ensureSdcardPlaceholderDir(
         linuxDir,
         partialSdcardMount = !sdcardSubPath.isNullOrBlank(),
+        unavailableReason = if (WorkspaceMounts.allFilesAccessGranted(appContext)) {
+            null
+        } else {
+            WorkspaceMounts.SDCARD_PERMISSION_REQUIRED_MESSAGE
+        },
     )
 }
 

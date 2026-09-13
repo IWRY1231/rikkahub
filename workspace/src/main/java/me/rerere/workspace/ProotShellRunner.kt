@@ -77,22 +77,37 @@ internal fun cleanupSdcardPlaceholder(linuxDir: File, sdcardTarget: String): Lis
  * 确保 rootfs 内 /sdcard 占位目录存在且可写——proot 启动时需要在该目录下定位/创建
  * 绑定目标(如 /sdcard/Download/Agent), 因此它必须保持为可写目录。
  *
- * 部分挂载模式下额外写入 MOUNT_NOTICE.txt, 供 `ls /sdcard` 时识别占位身份。
+ * 部分挂载模式下额外写入 MOUNT_NOTICE.txt, 供 `ls /sdcard` 时识别占位身份;
+ * [unavailableReason] 非空(如未授予「所有文件访问」权限、手机存储未挂载)时,
+ * 告示改为写明不可用原因——避免"看到空目录却不知为何"。
  * 注意: proot --root-id 的伪 root 会使权限位失效(实测 chmod 555 无法阻止写入),
  * 因此范围外的硬拦截不在文件系统层, 而在 shell 命令文本层
  * (见 [ensureShellCommandSdcardScope])。
  */
-fun ensureSdcardPlaceholderDir(linuxDir: File, partialSdcardMount: Boolean) {
+fun ensureSdcardPlaceholderDir(
+    linuxDir: File,
+    partialSdcardMount: Boolean,
+    unavailableReason: String? = null,
+) {
     runCatching {
         val dir = File(linuxDir, "sdcard")
         if (dir.isFile) dir.delete()
         if (!dir.isDirectory) dir.mkdirs()
         dir.setWritable(true, false)
         val notice = File(dir, "MOUNT_NOTICE.txt")
-        if (partialSdcardMount) {
-            val text = "此目录是工作区沙盒占位, 不是手机存储!\n" +
-                "当前仅挂载了: /sdcard 下的用户指定子目录, 范围外路径的读写会被拒绝。\n" +
-                "This is a sandbox placeholder; only the user-selected subdirectory of /sdcard is mounted.\n"
+        val text = when {
+            unavailableReason != null ->
+                "此目录是工作区沙盒占位, 不是手机存储!\n$unavailableReason\n" +
+                    "This is a sandbox placeholder; phone storage is not mounted into the workspace.\n"
+
+            partialSdcardMount ->
+                "此目录是工作区沙盒占位, 不是手机存储!\n" +
+                    "当前仅挂载了: /sdcard 下的用户指定子目录, 范围外路径的读写会被拒绝。\n" +
+                    "This is a sandbox placeholder; only the user-selected subdirectory of /sdcard is mounted.\n"
+
+            else -> null
+        }
+        if (text != null) {
             if (!notice.isFile || notice.readText() != text) notice.writeText(text)
         } else {
             if (notice.exists()) notice.delete()
@@ -101,9 +116,49 @@ fun ensureSdcardPlaceholderDir(linuxDir: File, partialSdcardMount: Boolean) {
 }
 
 /**
+ * 遍历命令文本中所有 /sdcard 引用 token。
+ *
+ * 词法规则（[ensureShellCommandSdcardScope] 与 [commandReferencesSdcardPath] 共用同一份实现,
+ * 避免两处边界判定漂移）:
+ * - 前一个字符须为分隔符, 避免 /usr/share/sdcard-doc 之类误伤;
+ * - token 允许的字符集见下方扫描循环（与历史实现保持一致）;
+ * - 仅回调形如 /sdcard 或 /sdcard/... 的 token。
+ */
+private inline fun forEachSdcardToken(command: String, action: (String) -> Unit) {
+    var idx = command.indexOf("/sdcard")
+    while (idx >= 0) {
+        val prev = if (idx == 0) ' ' else command[idx - 1]
+        val prevIsDelimiter = !prev.isLetterOrDigit() && prev !in setOf('_')
+        if (prevIsDelimiter) {
+            var end = idx + "/sdcard".length
+            while (end < command.length && (command[end].isLetterOrDigit() || command[end] in "/._-+={}\$@%")) end++
+            val token = command.substring(idx, end).trimEnd(',', ';', ':', '!', '?')
+            if (token == "/sdcard" || token.startsWith("/sdcard/")) action(token)
+        }
+        idx = command.indexOf("/sdcard", idx + 1)
+    }
+}
+
+/**
+ * 命令文本是否引用了 /sdcard（与 [ensureShellCommandSdcardScope] 共用同一套词法边界）。
+ *
+ * 供 app 层在「/sdcard 完全不可用」时做确定性拦截：例如未授予「所有文件访问」权限时
+ * 挂载被整体撤下, 此时若仍放行命令, 只会写进沙盒占位目录且命令本身不报错。
+ */
+fun commandReferencesSdcardPath(command: String): Boolean {
+    var referenced = false
+    forEachSdcardToken(command) { referenced = true }
+    return referenced
+}
+
+/**
  * /sdcard 部分挂载模式下, 对即将执行的 shell 命令做路径范围检查(确定性的入口拦截):
  * 命令文本中出现的 /sdcard 引用只允许恰好是 [allowedTarget] 及其子路径
  * (裸 /sdcard 允许——那是带 MOUNT_NOTICE 的占位视图, ls 可见)。
+ *
+ * 拒绝的场景**包含挂载目标的父目录/中间目录**（如挂载 /sdcard/Download/Agent 时引用
+ * /sdcard/Download）: 容器内这些路径只是沙盒占位, 列目录只能看到挂载点一项(假的部分视图),
+ * 写进去的文件会落进占位目录并在事后被清理 —— 即"看起来成功但手机上什么都没有"。
  *
  * 处理细节:
  * - 前一个字符须为分隔符, 避免 /usr/share/sdcard-doc 之类误伤;
@@ -115,27 +170,18 @@ fun ensureSdcardPlaceholderDir(linuxDir: File, partialSdcardMount: Boolean) {
  */
 fun ensureShellCommandSdcardScope(command: String, allowedTarget: String) {
     val allowed = allowedTarget.trimEnd('/')
-    var idx = command.indexOf("/sdcard")
-    while (idx >= 0) {
-        val prev = if (idx == 0) ' ' else command[idx - 1]
-        val prevIsDelimiter = !prev.isLetterOrDigit() && prev !in setOf('_')
-        if (prevIsDelimiter) {
-            var end = idx + "/sdcard".length
-            while (end < command.length && (command[end].isLetterOrDigit() || command[end] in "/._-+={}\$@%")) end++
-            val token = command.substring(idx, end).trimEnd(',', ';', ':', '!', '?')
-            if (token == "/sdcard" || token.startsWith("/sdcard/")) {
-                val normalized = normalizeSdcardPath(token)
-                val passesThroughAllowed = token == allowed || token.startsWith("$allowed/")
-                val withinAllowed = normalized == allowed || normalized.startsWith("$allowed/")
-                if (!withinAllowed && !(normalized == "/sdcard" && !passesThroughAllowed)) {
-                    error(
-                        "shell 命令引用了未挂载的路径 \"$token\"(部分挂载模式, 仅 $allowed 可用); " +
-                            "已拒绝执行。请只在 $allowed 内操作。"
-                    )
-                }
-            }
+    forEachSdcardToken(command) { token ->
+        val normalized = normalizeSdcardPath(token)
+        val passesThroughAllowed = token == allowed || token.startsWith("$allowed/")
+        val withinAllowed = normalized == allowed || normalized.startsWith("$allowed/")
+        if (!withinAllowed && !(normalized == "/sdcard" && !passesThroughAllowed)) {
+            error(
+                "shell 命令引用了未挂载的路径 \"$token\"（部分挂载模式, 仅 $allowed 可用）; " +
+                    "容器内该路径的父目录/其他目录只是沙盒占位, 不是手机内容 —— 列目录会得到不完整的结果, " +
+                    "写进去的文件不会出现在手机上(事后会被清理), 因此已拒绝执行。请只在 $allowed 内操作; " +
+                    "若确实需要更大范围, 让用户在「工作区详情页 → 挂载子目录」改到更上层。"
+            )
         }
-        idx = command.indexOf("/sdcard", idx + 1)
     }
 }
 

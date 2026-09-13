@@ -81,6 +81,19 @@ private val IMAGE_EXTENSIONS = setOf(
 private fun String.isImagePath(): Boolean =
     substringAfterLast('.', "").lowercase() in IMAGE_EXTENSIONS
 
+/**
+ * 工具描述里的 /sdcard 说明: 按「所有文件访问」的实际状态陈述。
+ *
+ * 未授权时若仍写 "mounted at /sdcard", 模型会以为手机存储可用, 从而把工具返回的空结果
+ * 解释成"手机里没有这些文件"; 必须与提示词(WorkspaceReminderTransformer)口径一致。
+ */
+private fun sdcardNote(workspaceRepository: WorkspaceRepository): String =
+    if (workspaceRepository.allFilesAccessGranted()) {
+        "Phone storage is mounted at /sdcard (access may be limited to a user-configured subfolder)."
+    } else {
+        "Phone storage (/sdcard) is NOT available: the 「All files access」 permission is not granted \u2014 do not attempt to read or write /sdcard."
+    }
+
 private fun createReadFileTool(
     workspaceId: String,
     needsApproval: (String) -> Boolean,
@@ -90,11 +103,10 @@ private fun createReadFileTool(
     description = """
         Read a file using the assistant's bound workspace Rootfs. Paths must be absolute inside Rootfs.
         Use /workspace for the workspace files area.
-        Phone storage is mounted at /sdcard when granted.
         Supports UTF-8 text files and image files (png, jpg, jpeg, gif, webp, bmp, svg, heic, heif, avif, ico).
         For large text files pass offset/limit to read a byte range instead of the whole file.
         PDF/DOCX/PPTX/EPUB files are parsed to text automatically.
-    """.trimIndent().replace("\n", " "),
+    """.trimIndent().replace("\n", " ") + " " + sdcardNote(workspaceRepository),
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
@@ -170,9 +182,8 @@ private fun createWriteFileTool(
     description = """
         Write a file using the assistant's bound workspace Rootfs. Paths must be absolute inside Rootfs.
         Use /workspace for the workspace files area.
-        Phone storage is mounted at /sdcard when granted.
         Content is UTF-8 text by default; pass encoding="base64" to write binary data (e.g. images, archives, fonts).
-    """.trimIndent().replace("\n", " "),
+    """.trimIndent().replace("\n", " ") + " " + sdcardNote(workspaceRepository),
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
@@ -229,10 +240,9 @@ private fun createEditFileTool(
     description = """
         Edit a UTF-8 text file using the assistant's bound workspace Rootfs. Paths must be absolute inside Rootfs.
         Use /workspace for the workspace files area.
-        Phone storage is mounted at /sdcard when granted.
         Provide old_text and new_text. By default old_text must occur exactly once; set replace_all=true to replace every occurrence.
         If no exact match is found, whitespace-tolerant line matching is attempted automatically.
-    """.trimIndent().replace("\n", " "),
+    """.trimIndent().replace("\n", " ") + " " + sdcardNote(workspaceRepository),
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
@@ -295,9 +305,9 @@ private fun createListFilesTool(
     name = "workspace_list_files",
     description = """
         List a directory inside the assistant's bound workspace Rootfs. Paths must be absolute inside Rootfs.
-        Use /workspace for the workspace files area. Phone storage is mounted at /sdcard when granted.
+        Use /workspace for the workspace files area.
         Returns each entry's path, type (file/directory), size and modified time.
-    """.trimIndent().replace("\n", " "),
+    """.trimIndent().replace("\n", " ") + " " + sdcardNote(workspaceRepository),
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
@@ -424,7 +434,7 @@ private fun createShellTool(
     name = "workspace_shell",
     description = buildString {
         append("Run a shell command in the assistant's bound workspace Rootfs. The workspace files area is mounted at /workspace. ")
-        append("Phone storage is mounted at /sdcard when granted. ")
+        append(sdcardNote(workspaceRepository)).append(' ')
         append("Use cwd for a path relative to the workspace files root. ")
         if (!defaultCwd.isNullOrBlank()) {
             append("Defaults to '$defaultCwd'. ")

@@ -30,7 +30,7 @@ class WorkspaceReminderTransformer(
         // 与 ChatToolFactory.createWorkspaceToolsIfReady 保持一致: 仅在 shell 就绪时注入
         if (workspace.shellStatus != WorkspaceShellStatus.READY.name) return messages
 
-        val prompt = buildWorkspacePrompt(workspace, ctx.workspaceCwd) +
+        val prompt = buildWorkspacePrompt(workspace, ctx.workspaceCwd, workspaceRepository.allFilesAccessGranted()) +
             buildAgentsPrompt(workspaceId, ctx.workspaceCwd)
 
         // 追加到第一条 system 消息; 若不存在则插入一条
@@ -92,7 +92,11 @@ class WorkspaceReminderTransformer(
     }
 }
 
-private fun buildWorkspacePrompt(workspace: WorkspaceEntity, cwd: String? = null): String = buildString {
+private fun buildWorkspacePrompt(
+    workspace: WorkspaceEntity,
+    cwd: String? = null,
+    sdcardGranted: Boolean = true,
+): String = buildString {
     appendLine("<workspace>")
     appendLine("You have access to a persistent Linux workspace named \"${workspace.name}\", running in a sandboxed proot rootfs environment.")
     appendLine("- The workspace files area is mounted at `/workspace`. Use it as your working directory; files written there persist across turns of this conversation.")
@@ -104,12 +108,17 @@ private fun buildWorkspacePrompt(workspace: WorkspaceEntity, cwd: String? = null
     appendLine("- Prefer `workspace_shell` for tasks that standard Unix tools handle well, and prefer `workspace_edit_file` for targeted edits over rewriting whole files.")
     appendLine("- The skills directory is mounted at `/skills`. Each skill is a subdirectory `/skills/<skill-name>/` containing a `SKILL.md` (with `name` and `description` frontmatter) plus any supporting files. Read a skill's `SKILL.md` before using it, and follow its instructions.")
     appendLine("- Files the user uploaded are mounted at `/upload`. Treat `/upload` as READ-ONLY: read uploaded files from `/upload/<file-name>`, but never modify, overwrite, or delete anything there. If you need to change an uploaded file, copy it into `/workspace` first and edit the copy.")
-    // Android 本地互通恒开启（原总开关已停用）：/sdcard 挂载说明始终输出，仅子目录配置可变
-    if (workspace.sdcardSubPath.isNullOrBlank()) {
-        appendLine("- Your phone's storage is mounted at `/sdcard` when full storage access is granted. Read or write user files directly under `/sdcard/<path>`; if the directory appears empty, full storage access is not granted yet.")
+    // Android 本地互通恒开启（原总开关已停用），但 /sdcard 是否真的可用取决于「所有文件访问」权限:
+    // 提示词必须**陈述事实**（未授权时明确说不可用）, 否则模型会把"空目录"解释成"手机里没有文件"
+    if (!sdcardGranted) {
+        appendLine("- Phone storage (`/sdcard`) is NOT available in this session: the \u300cAll files access\u300d permission has NOT been granted, so nothing from the phone is mounted into the workspace. Do NOT try to read or write `/sdcard` — such calls fail immediately. If the user asks to work with phone files, tell them to grant \u300c所有文件访问\u300d on the workspace detail page (and restart the app as prompted) first.")
+    } else if (workspace.sdcardSubPath.isNullOrBlank()) {
+        appendLine("- Your phone's storage is mounted at `/sdcard` (full storage access is granted). Read or write user files directly under `/sdcard/<path>`.")
     } else {
-        appendLine("- The phone folder `/sdcard/${workspace.sdcardSubPath}` is mounted at the same path `/sdcard/${workspace.sdcardSubPath}` when full storage access is granted (direct access, no sync). Only this folder is available; if it appears empty, full storage access is not granted yet.")
-        appendLine("  - IMPORTANT: only `/sdcard/${workspace.sdcardSubPath}` is mounted from the phone. Any other path under `/sdcard` is a sandbox placeholder — it is NOT the phone storage, files written there will fail or be invisible to the user. Never read or write outside `/sdcard/${workspace.sdcardSubPath}`.")
+        val parent = workspace.sdcardSubPath.substringBeforeLast('/', "")
+        val parentHint = if (parent.isNotEmpty()) " e.g. `/sdcard/$parent`," else ""
+        appendLine("- The phone folder `/sdcard/${workspace.sdcardSubPath}` is mounted at the same path `/sdcard/${workspace.sdcardSubPath}` (direct access, no sync). Only this folder is available.")
+        appendLine("  - IMPORTANT: any other path under `/sdcard` — including its parent/middle directories ($parentHint) — is a sandbox placeholder, NOT the phone storage: listing it gives an incomplete view and references to it are rejected before execution. Never read or write outside `/sdcard/${workspace.sdcardSubPath}`; if the user needs a broader scope, ask them to change \u300c挂载子目录\u300d in the workspace settings.")
     }
     if (!cwd.isNullOrBlank()) {
         appendLine("- Current working directory: `$cwd`. Use this as the default context for file operations and shell commands.")

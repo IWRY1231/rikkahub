@@ -171,12 +171,66 @@ class RootfsPathResolutionTest {
             manager.resolveRootfsPath(root, "/sdcard/DCIM/x.jpg", extraBindMounts = mounts)
         }
         assertTrue(error.message!!.contains("部分挂载"))
+        // 报错要可行动: 指明父目录/中间目录也是占位, 并给出扩大范围的位置
+        assertTrue(error.message!!.contains("沙盒占位"))
+        assertTrue(error.message!!.contains("挂载子目录"))
 
         // 完全未挂载 /sdcard 时同样显式报错
         val error2 = assertThrows(IllegalStateException::class.java) {
             manager.resolveRootfsPath(root, "/sdcard/DCIM/x.jpg")
         }
         assertTrue(error2.message!!.contains("/sdcard"))
+        // 未挂载场景(权限未授予/配置无效)要说明原因与恢复动作, 不能让调用方看到"空目录"
+        assertTrue(error2.message!!.contains("所有文件访问"))
+    }
+
+    @Test
+    fun commandReferencesSdcardPathRespectsLexicalBoundaries() {
+        // 引用 /sdcard 的写法: 命中（供 app 层在权限缺失时做确定性拦截）
+        assertTrue(commandReferencesSdcardPath("ls /sdcard"))
+        assertTrue(commandReferencesSdcardPath("cat /sdcard/Download/a.txt"))
+        assertTrue(commandReferencesSdcardPath("cd /sdcard/Download && ls"))
+        assertTrue(commandReferencesSdcardPath("echo x >'/sdcard/DCIM/a.jpg'"))
+        assertTrue(commandReferencesSdcardPath("/sdcard"))
+        assertTrue(commandReferencesSdcardPath("cp a.txt /sdcard/Download/"))
+
+        // 非 /sdcard 语义: 不命中（词法边界与 ensureShellCommandSdcardScope 一致）
+        assertEquals(false, commandReferencesSdcardPath("cat /usr/share/sdcard-doc"))
+        assertEquals(false, commandReferencesSdcardPath("ls /workspace"))
+        assertEquals(false, commandReferencesSdcardPath("echo sdcard"))
+        assertEquals(false, commandReferencesSdcardPath("df -h /mnt/media/sdcardX"))
+        assertEquals(false, commandReferencesSdcardPath(""))
+    }
+
+    @Test
+    fun shellScopeErrorExplainsWhyAndHowToWiden() {
+        val error = assertThrows(IllegalStateException::class.java) {
+            ensureShellCommandSdcardScope("ls /sdcard/Download", "/sdcard/Download/Agent")
+        }
+        val message = error.message!!
+        // 保留原有判定所需的关键词 + 可行动的说明
+        assertTrue(message.contains("部分挂载"))
+        assertTrue(message.contains("/sdcard/Download/Agent"))
+        assertTrue(message.contains("沙盒占位"))
+        assertTrue(message.contains("挂载子目录"))
+    }
+
+    @Test
+    fun sdcardPlaceholderNoticeExplainsUnavailableReason() {
+        val linuxDir = tempFolder.newFolder("linux-unavailable")
+        val reason = "「所有文件访问」权限未授予: 手机存储(/sdcard)没有挂载到工作区, 当前无法读写。"
+
+        ensureSdcardPlaceholderDir(linuxDir, partialSdcardMount = false, unavailableReason = reason)
+        val notice = File(File(linuxDir, "sdcard"), "MOUNT_NOTICE.txt")
+        assertTrue(notice.isFile)
+        // 告示必须写明"不是手机存储"与具体原因（避免"看到空目录却不知为何"）
+        val text = notice.readText()
+        assertTrue(text.contains("沙盒占位"))
+        assertTrue(text.contains("所有文件访问"))
+
+        // 权限恢复后（不再有 unavailableReason）告示应被清除
+        ensureSdcardPlaceholderDir(linuxDir, partialSdcardMount = false)
+        assertTrue(!notice.exists())
     }
 
     @Test

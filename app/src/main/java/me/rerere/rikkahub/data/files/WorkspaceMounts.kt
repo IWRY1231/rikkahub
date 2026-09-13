@@ -3,6 +3,7 @@ package me.rerere.rikkahub.data.files
 import android.content.Context
 import android.os.Environment
 import android.util.Log
+import me.rerere.rikkahub.utils.hasAllFilesAccessPermission
 import me.rerere.workspace.WorkspaceBindMount
 import java.io.File
 
@@ -19,6 +20,23 @@ import java.io.File
  */
 object WorkspaceMounts {
     private const val TAG = "WorkspaceMounts"
+
+    /**
+     * 「所有文件访问」权限未授予时的统一说明。
+     *
+     * 单一事实源, 三处共用: ① 文件工具的路径预检 ② AI shell 命令的文本预检（[commandReferencesSdcardPath]）
+     * ③ 交互式终端的 MOUNT_NOTICE 告示。原则: 未授权的能力要**响亮报错**, 不允许静默退化成"空目录"。
+     */
+    const val SDCARD_PERMISSION_REQUIRED_MESSAGE: String =
+        "「所有文件访问」权限未授予: 手机存储(/sdcard)没有挂载到工作区, 当前无法读写。" +
+            "请在「工作区详情页 → 所有文件访问」授权(授予后按提示重启应用)再重试。"
+
+    /**
+     * 是否已授予「所有文件访问」（/sdcard 可用性的单一事实源）。
+     *
+     * Android 11+ 走 MANAGE_EXTERNAL_STORAGE; 更低版本回退 READ_EXTERNAL_STORAGE(见 utils/ContextUtil.kt)。
+     */
+    fun allFilesAccessGranted(context: Context): Boolean = context.hasAllFilesAccessPermission()
 
     fun androidLocalMounts(context: Context): List<WorkspaceBindMount> = buildList {
         add(WorkspaceBindMount(File(context.filesDir, FileFolders.SKILLS).apply { mkdirs() }, "/skills"))

@@ -164,21 +164,26 @@ class WorkspaceManager(
             )
         }
 
-        // /sdcard 部分挂载防护: 未挂载的 /sdcard 子路径显式报错, 而不是静默落进沙盒占位目录
+        // /sdcard 访问防护: 未挂载 / 未授权的 /sdcard 路径显式报错, 而不是静默落进沙盒占位目录
+        // (权限未授予时 app 层不会传 /sdcard 挂载, 于是这里给出"不可用"的明确原因)
         if (trimmed == "/sdcard" || trimmed.startsWith("/sdcard/")) {
             val sdcardTargets = (mounts + extraBindMounts)
                 .map { it.target.trimEnd('/') }
                 .filter { it == "/sdcard" || it.startsWith("/sdcard/") }
             if (sdcardTargets.none { target -> trimmed == target || trimmed.startsWith("$target/") }) {
-                val available = if (sdcardTargets.isEmpty()) {
-                    "未挂载(本地互通已关闭或未授权)"
+                if (sdcardTargets.isEmpty()) {
+                    error(
+                        "/sdcard 未挂载到工作区（未授予「所有文件访问」权限, 或挂载配置无效）: " +
+                            "\"$trimmed\" 不可访问, 已阻止本次操作(否则会静默写入沙盒占位目录, 文件不会出现在手机上)。" +
+                            "请在「工作区详情页 → 所有文件访问」授权后重试。"
+                    )
                 } else {
-                    sdcardTargets.joinToString(", ")
+                    error(
+                        "/sdcard 处于部分挂载模式: 当前仅 ${sdcardTargets.joinToString(", ")} 可访问; " +
+                            "\"$trimmed\" 不在挂载范围内 —— 容器内该路径只是沙盒占位(列目录会得到不完整的结果, " +
+                            "写入也不会出现在手机上), 已阻止本次操作。可在「工作区详情页 → 挂载子目录」扩大范围。"
+                    )
                 }
-                error(
-                    "/sdcard 处于部分挂载模式: 当前仅 $available 可访问; " +
-                        "\"$trimmed\" 不在挂载范围内, 已阻止本次操作(否则会静默写入沙盒占位目录, 文件不会出现在手机上)"
-                )
             }
         }
 
