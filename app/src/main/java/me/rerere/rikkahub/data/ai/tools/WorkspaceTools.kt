@@ -36,13 +36,16 @@ private const val MAX_DOCUMENT_CHARS = 200_000
 /** 走文档解析而非按文本读取的扩展名 */
 private val DOCUMENT_EXTENSIONS = setOf("pdf", "docx", "pptx", "epub")
 
+// 默认审批策略(用户 2026-09-13 决定): 只有 shell 默认需审批;
+// 读/列目录/写/编辑/删除/移动全部默认免审批(白名单外路径仍强制审批, 见 WRITABLE_ROOT_PREFIXES)。
+// 每个工作区可在详情页「工具审批」里逐个覆盖(覆盖值优先于此处默认)。
 val WorkspaceToolDefaultApprovals: Map<String, Boolean> = mapOf(
     "workspace_read_file" to false,
     "workspace_list_files" to false,
     "workspace_write_file" to false,
     "workspace_edit_file" to false,
-    "workspace_delete_file" to true,
-    "workspace_move_file" to true,
+    "workspace_delete_file" to false,
+    "workspace_move_file" to false,
     "workspace_shell" to true,
 )
 
@@ -194,10 +197,9 @@ private fun createWriteFileTool(
             required = listOf("path", "text"),
         )
     },
-    // base64(二进制)写入始终需要审批
+    // 二进制(base64)写入与文本同等对待(用户 2026-09-13 决定): 仅白名单外路径强制审批
     needsApproval = {
-        needsApproval("workspace_write_file") || it.pathOutsideWritableRoots("path") ||
-            it.jsonObject.string("encoding").equals("base64", ignoreCase = true)
+        needsApproval("workspace_write_file") || it.pathOutsideWritableRoots("path")
     },
     execute = {
         val params = it.jsonObject
