@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Card
@@ -29,8 +30,10 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,6 +61,7 @@ import me.rerere.rikkahub.ui.theme.LocalDarkMode
 import me.rerere.rikkahub.utils.plus
 import me.rerere.search.DoubaoSearchMode
 import me.rerere.search.SearchCommonOptions
+import me.rerere.search.SearchKeyUsage
 import me.rerere.search.SearchResult
 import me.rerere.search.SearchService
 import me.rerere.search.SearchServiceOptions
@@ -355,6 +359,18 @@ internal fun TavilyOptions(
     options: SearchServiceOptions.TavilyOptions,
     onUpdateOptions: (SearchServiceOptions.TavilyOptions) -> Unit
 ) {
+    // 额度查询: 逐把 Key 请求 Tavily /usage, 仅展示每把 Key 的已用/上限
+    val scope = rememberCoroutineScope()
+    var usageLoading by remember { mutableStateOf(false) }
+    var usageItems by remember { mutableStateOf<List<SearchKeyUsage>?>(null) }
+    var usageError by remember { mutableStateOf<String?>(null) }
+
+    // Key 变更后清空旧结果, 避免展示与当前 Key 不符的额度
+    LaunchedEffect(options.apiKey) {
+        usageItems = null
+        usageError = null
+    }
+
     FormItem(
         label = {
             Text(stringResource(R.string.search_detail_api_key))
@@ -388,6 +404,69 @@ internal fun TavilyOptions(
                 ) {
                     Text(depth.replaceFirstChar { it.uppercase() })
                 }
+            }
+        }
+    }
+
+    FormItem(
+        label = {
+            Text(stringResource(R.string.search_detail_usage))
+        },
+        tail = {
+            TextButton(
+                onClick = {
+                    if (usageLoading) return@TextButton
+                    usageLoading = true
+                    usageError = null
+                    scope.launch {
+                        SearchService.getService(options).getUsage(options)
+                            .onSuccess { usageItems = it.items }
+                            .onFailure {
+                                usageItems = null
+                                usageError = it.message ?: it.toString()
+                            }
+                        usageLoading = false
+                    }
+                },
+                enabled = !usageLoading && options.apiKey.isNotBlank()
+            ) {
+                if (usageLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text(stringResource(R.string.search_detail_usage_query))
+                }
+            }
+        }
+    ) {
+        val unlimited = stringResource(R.string.search_detail_usage_unlimited)
+        val lineFormat = stringResource(R.string.search_detail_usage_used_of_limit)
+        val showKeyLabel = (usageItems?.size ?: 0) > 1
+        when {
+            usageError != null -> Text(
+                text = usageError ?: "",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+
+            usageItems != null -> usageItems?.forEach { item ->
+                val error = item.error
+                val text = if (error != null) {
+                    error
+                } else {
+                    lineFormat.format(
+                        item.used?.toString() ?: "-",
+                        item.limit?.toString() ?: unlimited
+                    )
+                }
+                Text(
+                    text = if (showKeyLabel) "${item.label}  $text" else text,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (error != null) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

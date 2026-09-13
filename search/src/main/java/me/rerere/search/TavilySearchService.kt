@@ -15,9 +15,11 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import me.rerere.ai.core.InputSchema
+import me.rerere.ai.util.KeyRoulette
 import me.rerere.search.SearchResult.SearchResultItem
 import me.rerere.search.SearchService.Companion.httpClient
 import me.rerere.search.SearchService.Companion.json
@@ -165,6 +167,45 @@ object TavilySearchService : SearchService<SearchServiceOptions.TavilyOptions> {
         }
     }
 
+    /**
+     * 额度查询: 逐把 Key 请求 GET https://api.tavily.com/usage
+     * 单把 Key 失败只影响该项(以 error 回传), 不中断其余 Key
+     */
+    override suspend fun getUsage(
+        serviceOptions: SearchServiceOptions.TavilyOptions
+    ): Result<SearchUsage> = withContext(Dispatchers.IO) {
+        runCatching {
+            val keys = KeyRoulette.split(serviceOptions.apiKey)
+            if (keys.isEmpty()) error("API key is empty")
+            SearchUsage(items = keys.map { queryKeyUsage(it) })
+        }
+    }
+
+    private suspend fun queryKeyUsage(apiKey: String): SearchKeyUsage {
+        val label = maskApiKey(apiKey)
+        return try {
+            val request = Request.Builder()
+                .url("https://api.tavily.com/usage")
+                .addHeader("Authorization", "Bearer $apiKey")
+                .get()
+                .build()
+            val response = httpClient.newCall(request).await()
+            if (!response.isSuccessful) {
+                return SearchKeyUsage(label = label, error = usageErrorMessage(response))
+            }
+            val usage = json.decodeFromString<UsageResponse>(response.body.string())
+            val keyUsage = usage.key
+                ?: return SearchKeyUsage(label = label, error = "invalid usage response")
+            SearchKeyUsage(
+                label = label,
+                used = keyUsage.usage,
+                limit = keyUsage.limit,
+            )
+        } catch (e: Exception) {
+            SearchKeyUsage(label = label, error = e.message ?: "unknown error")
+        }
+    }
+
     @Serializable
     data class SearchResponse(
         val query: String,
@@ -194,4 +235,28 @@ object TavilySearchService : SearchService<SearchServiceOptions.TavilyOptions> {
         @SerialName("raw_content")
         val rawContent: String,
     )
+
+    @Serializable
+    data class UsageResponse(
+        val key: UsageKey? = null,
+    )
+
+    @Serializable
+    data class UsageKey(
+        val usage: Long? = null,
+        val limit: Long? = null,
+    )
+}
+
+/** 掩码 Key, 仅用于额度列表区分每一行(不展示完整密钥) */
+private fun maskApiKey(apiKey: String): String =
+    if (apiKey.length <= 12) apiKey else "${apiKey.take(8)}…${apiKey.takeLast(4)}"
+
+/** 额度接口失败时尽量回传服务端 detail.error, 否则回传 HTTP 状态码 */
+private fun usageErrorMessage(response: okhttp3.Response): String {
+    val detail = runCatching {
+        SearchService.json.parseToJsonElement(response.body.string())
+            .jsonObject["detail"]?.jsonObject?.get("error")?.jsonPrimitive?.content
+    }.getOrNull()
+    return detail ?: "HTTP ${response.code}"
 }

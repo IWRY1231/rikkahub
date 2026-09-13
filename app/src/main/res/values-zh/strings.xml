@@ -576,6 +576,10 @@
   <string name="search_detail_summary_desc">启用摘要生成</string>
   <string name="search_detail_system_prompt">系统提示</string>
   <string name="search_detail_unknown_error">未知错误</string>
+  <string name="search_detail_usage">额度</string>
+  <string name="search_detail_usage_query">查询</string>
+  <string name="search_detail_usage_unlimited">不限</string>
+  <string name="search_detail_usage_used_of_limit">已用 %1$s / 上限 %2$s</string>
   <string name="search_detail_username">用户名</string>
   <string name="search_page_hint">输入关键词并点击搜索以查找消息</string>
   <string name="search_page_no_results">无结果</string>

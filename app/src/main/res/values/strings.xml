@@ -583,6 +583,10 @@
   <string name="search_detail_summary_desc">Enable summary generation</string>
   <string name="search_detail_system_prompt">System Prompt</string>
   <string name="search_detail_unknown_error">Unknown error</string>
+  <string name="search_detail_usage">Usage</string>
+  <string name="search_detail_usage_query">Query</string>
+  <string name="search_detail_usage_unlimited">Unlimited</string>
+  <string name="search_detail_usage_used_of_limit">Used %1$s / Limit %2$s</string>
   <string name="search_detail_username">Username</string>
   <string name="search_page_hint">Enter keywords and press Search to find messages</string>
   <string name="search_page_no_results">No results</string>

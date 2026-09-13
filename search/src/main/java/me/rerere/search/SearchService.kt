@@ -41,6 +41,13 @@ interface SearchService<T : SearchServiceOptions> {
         serviceOptions: T
     ): Result<ScrapedResult>
 
+    /**
+     * 查询该搜索服务的额度(可选能力, 默认不支持)
+     * 目前仅 Tavily 实现; 单把 Key 失败以 [SearchKeyUsage.error] 回传, 不抛异常
+     */
+    suspend fun getUsage(serviceOptions: T): Result<SearchUsage> =
+        Result.failure(UnsupportedOperationException("Usage query is not supported"))
+
     companion object {
         @Suppress("UNCHECKED_CAST")
         fun <T : SearchServiceOptions> getService(options: T): SearchService<T> {

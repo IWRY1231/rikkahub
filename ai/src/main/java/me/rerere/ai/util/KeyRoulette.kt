@@ -16,6 +16,12 @@ interface KeyRoulette {
          * 通过 providerId 区分同类型的多个 provider 实例，在 next() 调用时传入
          */
         fun lru(context: Context): KeyRoulette = LruKeyRoulette(context)
+
+        /**
+         * 拆分多 Key 字符串(空白/换行/逗号分隔, 去重)
+         * 与 next() 使用同一套规则, 供额度查询等需要逐 Key 处理的场景复用
+         */
+        fun split(keys: String): List<String> = splitKey(keys)
     }
 }
 
