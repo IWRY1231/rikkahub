@@ -34,6 +34,69 @@ class WorkspaceFileSystem(
         return file.readText(charset)
     }
 
+    /**
+     * 读取文件指定的字节区间内容, 返回文本与区间信息。
+     *
+     * 与 [readText] 不同: 这里**不套用 maxReadBytes**(由调用方决定分片大小), 用于大文件分段读取。
+     * 分片边界会**对齐到字符**(UTF-8): 返回的 [RootfsTextSlice.start]/[RootfsTextSlice.end] 是实际生效区间,
+     * 按 [RootfsTextSlice.nextOffset] 续读既不丢字也不产生乱码; 实际区间可能比 length 略大(最多 4 字节)。
+     */
+    fun readTextRange(
+        root: File,
+        path: String,
+        offset: Long = 0L,
+        length: Long = DEFAULT_SLICE_BYTES,
+        charset: Charset = StandardCharsets.UTF_8,
+    ): RootfsTextSlice {
+        val file = resolvePath(root, path)
+        require(file.exists()) { "File does not exist: $path" }
+        require(file.isFile) { "Path is not a file: $path" }
+        val total = file.length()
+        val rawStart = offset.coerceIn(0L, total)
+        // 多读 MAX_UTF8_CHAR_BYTES 字节: 保证窗口内至少有一个完整字符, 按 nextOffset 续读必定推进
+        val window = length.coerceAtLeast(0L) + MAX_UTF8_CHAR_BYTES
+        val rawEnd = (rawStart + window).coerceIn(rawStart, total)
+        if (rawEnd <= rawStart) return RootfsTextSlice("", rawStart, rawStart, total)
+
+        val size = (rawEnd - rawStart).toInt()
+        val buffer = ByteArray(size)
+        var read = 0
+        file.inputStream().use { input ->
+            var skipped = 0L
+            while (skipped < rawStart) {
+                val step = input.skip(rawStart - skipped)
+                if (step <= 0L) break
+                skipped += step
+            }
+            while (read < size) {
+                val step = input.read(buffer, read, size - read)
+                if (step < 0) break
+                read += step
+            }
+        }
+        val bytes = if (read == size) buffer else buffer.copyOf(read)
+
+        // 分片边界对齐到字符, 保证按 nextOffset 续读时**不丢字也不产生乱码**:
+        // 起点落在续字节上则跳过; 终点落在不完整序列中间则整体留给下一片。
+        var leading = 0
+        var tailDrop = 0
+        if (charset == StandardCharsets.UTF_8) {
+            if (rawStart > 0L) {
+                while (leading < bytes.size && (bytes[leading].toInt() and 0xC0) == 0x80) leading++
+            }
+            if (rawStart + read < total) {
+                tailDrop = incompleteTrailingBytes(bytes, leading)
+            }
+        }
+        val body = bytes.copyOfRange(leading, bytes.size - tailDrop)
+        return RootfsTextSlice(
+            text = String(body, charset),
+            start = rawStart + leading,
+            end = rawStart + read - tailDrop,
+            totalBytes = total,
+        )
+    }
+
     fun writeText(
         root: File,
         path: String,
@@ -211,4 +274,33 @@ class WorkspaceFileSystem(
 
     private fun Path.relativeToString(): String =
         joinToString("/") { it.name }
+}
+
+/** 分段读取时的默认分片大小(256 KiB) */
+private const val DEFAULT_SLICE_BYTES = 256L * 1024
+
+/** UTF-8 单字符最大字节数(窗口对齐用) */
+private const val MAX_UTF8_CHAR_BYTES = 4L
+
+/**
+ * 末尾不完整 UTF-8 序列的字节数(0 表示末尾字符完整), 用于分片边界对齐。
+ * 例: 中文 3 字节字符被切成 1~2 字节时返回 1~2, 让下一片从该字符的首字节重新读。
+ */
+private fun incompleteTrailingBytes(bytes: ByteArray, from: Int): Int {
+    var i = bytes.size - 1
+    var continuations = 0
+    while (i >= from && (bytes[i].toInt() and 0xC0) == 0x80) {
+        continuations++
+        i--
+    }
+    if (i < from) return bytes.size - from
+    val expected = when (val lead = bytes[i].toInt() and 0xFF) {
+        in 0x00..0x7F -> 1
+        in 0xC0..0xDF -> 2
+        in 0xE0..0xEF -> 3
+        in 0xF0..0xF7 -> 4
+        else -> 1
+    }
+    val seen = continuations + 1
+    return if (seen < expected) seen else 0
 }

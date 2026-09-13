@@ -15,6 +15,7 @@ import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.data.files.WorkspaceMounts
 import me.rerere.rikkahub.utils.JsonInstant
 import me.rerere.workspace.RootfsInstallProgress
+import me.rerere.workspace.RootfsTextSlice
 import me.rerere.workspace.RootfsInstaller
 import me.rerere.workspace.WorkspaceBindMount
 import me.rerere.workspace.WorkspaceCommandResult
@@ -390,6 +391,90 @@ class WorkspaceRepository(
         )
         syncLocalMirrorAfter(workspace, treeUri)
         result
+    }
+
+    /** 写入二进制内容(如 base64 解码后的数据), 与 [writeTextInRootfs] 同一套路径解析 */
+    suspend fun writeBytesInRootfs(
+        id: String,
+        path: String,
+        bytes: ByteArray,
+        overwrite: Boolean,
+    ): WorkspaceFileEntry = withContext(Dispatchers.IO) {
+        val workspace = dao.getById(id) ?: error("Workspace not found: $id")
+        manager.ensureWorkspace(workspace.root)
+        val treeUri = syncLocalMirrorBefore(workspace, path)
+        val result = manager.writeRootfsBytes(
+            workspace.root, path, bytes, overwrite, workspace.androidLocalAccess,
+            extraBindMounts = listOfNotNull(sdcardBind(workspace)),
+        )
+        syncLocalMirrorAfter(workspace, treeUri)
+        result
+    }
+
+    /** 按 Rootfs 内绝对路径列出目录 */
+    suspend fun listInRootfs(
+        id: String,
+        path: String,
+    ): List<WorkspaceFileEntry> = withContext(Dispatchers.IO) {
+        val workspace = dao.getById(id) ?: error("Workspace not found: $id")
+        manager.ensureWorkspace(workspace.root)
+        syncLocalMirrorBefore(workspace, path)
+        manager.listRootfs(
+            workspace.root, path, workspace.androidLocalAccess,
+            extraBindMounts = listOfNotNull(sdcardBind(workspace)),
+        )
+    }
+
+    /** 按 Rootfs 内绝对路径删除文件/目录 */
+    suspend fun deleteInRootfs(
+        id: String,
+        path: String,
+        recursive: Boolean,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val workspace = dao.getById(id) ?: error("Workspace not found: $id")
+        manager.ensureWorkspace(workspace.root)
+        val treeUri = syncLocalMirrorBefore(workspace, path)
+        val deleted = manager.deleteRootfs(
+            workspace.root, path, recursive, workspace.androidLocalAccess,
+            extraBindMounts = listOfNotNull(sdcardBind(workspace)),
+        )
+        // 删除后把镜像/手机侧同步到一致状态(源与目标都要检查)
+        syncLocalMirrorAfter(workspace, treeUri)
+        deleted
+    }
+
+    /** 按 Rootfs 内绝对路径移动/重命名 */
+    suspend fun moveInRootfs(
+        id: String,
+        source: String,
+        target: String,
+        overwrite: Boolean,
+    ): WorkspaceFileEntry = withContext(Dispatchers.IO) {
+        val workspace = dao.getById(id) ?: error("Workspace not found: $id")
+        manager.ensureWorkspace(workspace.root)
+        val treeUri = syncLocalMirrorBefore(workspace, source)
+        val result = manager.moveRootfs(
+            workspace.root, source, target, overwrite, workspace.androidLocalAccess,
+            extraBindMounts = listOfNotNull(sdcardBind(workspace)),
+        )
+        syncLocalMirrorAfter(workspace, treeUri)
+        result
+    }
+
+    /** 分段读取 Rootfs 内文件(大文件按 offset/length 分片) */
+    suspend fun readTextRangeInRootfs(
+        id: String,
+        path: String,
+        offset: Long,
+        length: Long,
+    ): RootfsTextSlice = withContext(Dispatchers.IO) {
+        val workspace = dao.getById(id) ?: error("Workspace not found: $id")
+        manager.ensureWorkspace(workspace.root)
+        syncLocalMirrorBefore(workspace, path)
+        manager.readRootfsTextRange(
+            workspace.root, path, offset, length, workspace.androidLocalAccess,
+            extraBindMounts = listOfNotNull(sdcardBind(workspace)),
+        )
     }
 
     suspend fun deleteFile(

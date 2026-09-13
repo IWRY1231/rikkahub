@@ -43,6 +43,23 @@ data class WorkspaceConfig(
     val maxSearchResults: Int = 100,
 )
 
+/**
+ * Rootfs 内文件的分段读取结果(用于大文件按 offset/length 分片读取)
+ *
+ * @param start 本次读取覆盖的字节区间起点(实际生效值)
+ * @param end 区间终点(不含); [truncated] 为 true 时可用 [nextOffset] 继续读
+ * @param totalBytes 文件总字节数
+ */
+data class RootfsTextSlice(
+    val text: String,
+    val start: Long,
+    val end: Long,
+    val totalBytes: Long,
+) {
+    val nextOffset: Long get() = end
+    val truncated: Boolean get() = end < totalBytes
+}
+
 data class WorkspaceFileEntry(
     val path: String,
     val name: String,

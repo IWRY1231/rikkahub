@@ -200,6 +200,74 @@ class WorkspaceManager(
         return RootfsLocation(linuxDir(root), trimmed.trimStart('/'))
     }
 
+    /** 列出 Rootfs 内绝对路径对应的目录内容(经 [resolveRootfsPath] 解析, 因此各挂载点/守卫一并生效) */
+    fun listRootfs(
+        root: String,
+        path: String,
+        includeAndroidLocal: Boolean = true,
+        extraBindMounts: List<WorkspaceBindMount> = emptyList(),
+    ): List<WorkspaceFileEntry> {
+        val location = resolveRootfsPath(root, path, includeAndroidLocal, extraBindMounts)
+        return fileSystem.list(location.rootDir, location.relativePath)
+    }
+
+    /** 删除 Rootfs 内绝对路径对应的文件/目录; 拒绝删除挂载点根目录本身 */
+    fun deleteRootfs(
+        root: String,
+        path: String,
+        recursive: Boolean = false,
+        includeAndroidLocal: Boolean = true,
+        extraBindMounts: List<WorkspaceBindMount> = emptyList(),
+    ): Boolean {
+        val location = resolveRootfsPath(root, path, includeAndroidLocal, extraBindMounts)
+        require(location.relativePath.isNotBlank()) { "Refusing to delete a mount root: $path" }
+        return fileSystem.delete(location.rootDir, location.relativePath, recursive)
+    }
+
+    /**
+     * 移动/重命名 Rootfs 内绝对路径。
+     * 同一挂载点内走 rename; 跨挂载点(如 /sdcard → /workspace)仅支持文件(复制后删除源),
+     * 目录跨挂载点请改用 shell (`mv`), 避免隐式的大批量复制。
+     */
+    fun moveRootfs(
+        root: String,
+        source: String,
+        target: String,
+        overwrite: Boolean = false,
+        includeAndroidLocal: Boolean = true,
+        extraBindMounts: List<WorkspaceBindMount> = emptyList(),
+    ): WorkspaceFileEntry {
+        val from = resolveRootfsPath(root, source, includeAndroidLocal, extraBindMounts)
+        val to = resolveRootfsPath(root, target, includeAndroidLocal, extraBindMounts)
+        require(to.relativePath.isNotBlank()) { "Refusing to overwrite a mount root: $target" }
+        if (from.rootDir.canonicalPath == to.rootDir.canonicalPath) {
+            return fileSystem.move(from.rootDir, from.relativePath, to.relativePath, overwrite)
+        }
+        val sourceFile = fileSystem.resolve(from.rootDir, from.relativePath)
+        require(sourceFile.isFile) {
+            "Cannot move a directory across mounts ($source -> $target), use workspace_shell with mv instead"
+        }
+        val targetFile = fileSystem.resolve(to.rootDir, to.relativePath)
+        require(!targetFile.exists() || overwrite) { "Target already exists: $target" }
+        if (targetFile.exists()) targetFile.delete()
+        val entry = fileSystem.importBytes(to.rootDir, to.relativePath, sourceFile.inputStream())
+        fileSystem.delete(from.rootDir, from.relativePath, recursive = false)
+        return entry
+    }
+
+    /** 分段读取 Rootfs 内文件(大文件按 offset/length 分片, 不做 maxReadBytes 限制) */
+    fun readRootfsTextRange(
+        root: String,
+        path: String,
+        offset: Long = 0L,
+        length: Long = 256L * 1024,
+        includeAndroidLocal: Boolean = true,
+        extraBindMounts: List<WorkspaceBindMount> = emptyList(),
+    ): RootfsTextSlice {
+        val location = resolveRootfsPath(root, path, includeAndroidLocal, extraBindMounts)
+        return fileSystem.readTextRange(location.rootDir, location.relativePath, offset, length)
+    }
+
     fun rootfsFileSize(
         root: String,
         path: String,
