@@ -159,11 +159,10 @@ class RootfsPathResolutionTest {
 
         val mounts = listOf(WorkspaceBindMount(source = File(sdcardDir, "Download"), target = "/sdcard/Download"))
 
-        // 挂载范围内正常解析
-        assertEquals(
-            File(sdcardDir, "Download/a.txt"),
-            manager.resolveRootfsPath(root, "/sdcard/Download/a.txt", extraBindMounts = mounts).rootDir,
-        )
+        // 挂载范围内正常解析: rootDir = 挂载源目录, relativePath = 挂载目标之后的相对路径
+        val location = manager.resolveRootfsPath(root, "/sdcard/Download/a.txt", extraBindMounts = mounts)
+        assertEquals(File(sdcardDir, "Download"), location.rootDir)
+        assertEquals("a.txt", location.relativePath)
         // 挂载范围外: 显式报错而不是静默落进沙盒占位目录
         val error = assertThrows(IllegalStateException::class.java) {
             manager.resolveRootfsPath(root, "/sdcard/DCIM/x.jpg", extraBindMounts = mounts)
@@ -247,6 +246,7 @@ class RootfsPathResolutionTest {
     fun cleanupSdcardPlaceholderRemovesOutOfScopeFiles() {
         val linuxDir = tempFolder.newFolder("linux")
         val sdcard = File(linuxDir, "sdcard")
+        sdcard.mkdirs()
         File(sdcard, "MOUNT_NOTICE.txt").writeText("notice")
         File(sdcard, "Download/Agent").mkdirs()
         File(sdcard, "DCIM").mkdirs()

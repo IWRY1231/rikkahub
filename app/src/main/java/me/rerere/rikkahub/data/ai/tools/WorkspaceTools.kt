@@ -572,8 +572,9 @@ private fun kotlinx.serialization.json.JsonObject.absolutePath(name: String): St
     return path
 }
 
-// 免强制审批的可写安全区: 工作区文件目录、临时目录 /tmp、技能目录, 以及已授权本地访问后的手机存储 /sdcard
-private val WRITABLE_ROOT_PREFIXES = listOf("/workspace", "/tmp", "/sdcard", "/skills")
+// 免强制审批的可写安全区: 工作区文件目录、临时目录 /tmp、技能目录、已授权本地访问后的手机存储 /sdcard,
+// 以及用户通过 SAF 授权的本地目录镜像 /local(2026-09-13 用户要求 /local 免审批)
+private val WRITABLE_ROOT_PREFIXES = listOf("/workspace", "/tmp", "/sdcard", "/skills", "/local")
 
 private fun kotlinx.serialization.json.JsonElement.pathOutsideWritableRoots(name: String): Boolean =
     runCatching {

@@ -41,10 +41,17 @@ internal fun buildShellWrapper(partialSdcardMount: Boolean, allowedTarget: Strin
  * 白名单: MOUNT_NOTICE.txt 与挂载目标路径本身(proot 绑定定位所建)。
  * 这些文件本来就到不了手机, 清理只是让"静默失效"变成"显式反馈"。
  */
+/** 容器内 /sdcard 在 Rootfs 中的占位目录名 */
+private const val SDCARD_PLACEHOLDER_DIR = "sdcard"
+
 internal fun cleanupSdcardPlaceholder(linuxDir: File, sdcardTarget: String): List<String> {
     val root = File(linuxDir, "sdcard")
     if (!root.isDirectory) return emptyList()
-    val allowedSegments = sdcardTarget.trim('/').split('/').filter { it.isNotBlank() }
+    // sdcardTarget 是容器内路径(如 "/sdcard/Download/Agent"), 而扫描根就是 <linux>/sdcard,
+    // 必须丢掉开头的 "sdcard" 段 —— 否则会把**已挂载目标本身**判成越界项删掉并误报
+    // (曾表现为每次命令后都出现 "[工作区] 已清理... /sdcard/Download/" 的假告警)。
+    val segments = sdcardTarget.trim('/').split('/').filter { it.isNotBlank() }
+    val allowedSegments = if (segments.firstOrNull() == SDCARD_PLACEHOLDER_DIR) segments.drop(1) else segments
     val leaked = mutableListOf<String>()
     fun scan(dir: File, depth: Int, guestPrefix: String) {
         dir.listFiles()?.forEach { child ->

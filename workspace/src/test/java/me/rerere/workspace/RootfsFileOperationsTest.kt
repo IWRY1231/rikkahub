@@ -61,6 +61,7 @@ class RootfsFileOperationsTest {
     @Test
     fun deletesDirectoryOnlyWhenRecursive() {
         val manager = createManager()
+        File(manager.filesDir(root), "dir").mkdirs()
         File(manager.filesDir(root), "dir/inner.txt").writeText("x")
 
         assertThrows(IllegalArgumentException::class.java) {
@@ -89,6 +90,7 @@ class RootfsFileOperationsTest {
     @Test
     fun refusesMovingDirectoryAcrossMounts() {
         val manager = createManager()
+        File(manager.filesDir(root), "dir").mkdirs()
         File(manager.filesDir(root), "dir/x.txt").writeText("x")
 
         val error = assertThrows(IllegalArgumentException::class.java) {
