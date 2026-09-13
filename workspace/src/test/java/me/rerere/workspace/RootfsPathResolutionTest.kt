@@ -134,6 +134,21 @@ class RootfsPathResolutionTest {
     }
 
     @Test
+    fun localDirectoryMirrorResolvesToLocalArea() {
+        manager = createManager()
+        File(manager.localDir(root), "notes").mkdirs()
+        File(manager.localDir(root), "notes/todo.md").writeText("hi")
+
+        val location = manager.resolveRootfsPath(root, "/local/notes/todo.md")
+        assertEquals(manager.localDir(root), location.rootDir)
+        assertEquals("notes/todo.md", location.relativePath)
+
+        val buffer = ByteArrayOutputStream()
+        manager.exportRootfsFile(root, "/local/notes/todo.md", buffer)
+        assertEquals("hi", buffer.toString(Charsets.UTF_8.name()))
+    }
+
+    @Test
     fun sdcardOutsideSubMountIsRejectedLoudly() {
         val sdcardDir = tempFolder.newFolder("fake-sdcard")
         File(sdcardDir, "Download").mkdirs()

@@ -157,6 +157,16 @@ class WorkspaceManager(
             }
         }
 
+        // 工作区文件区: Rootfs 内 $ROOTFS_WORKSPACE_DIR 是 filesDir 的绑定挂载(见 ProotShellRunner),
+        // 必须在这里解析, 否则会落到 Rootfs 里那个被挂载遮挡的空挂载点(读=文件不存在, 写=EACCES)。
+        // 注意: 与 includeAndroidLocal 无关 —— 它属于工作区自身, 不受"本地互通"总开关影响。
+        if (trimmed == ROOTFS_WORKSPACE_DIR || trimmed.startsWith("$ROOTFS_WORKSPACE_DIR/")) {
+            return RootfsLocation(
+                rootDir = filesDir(root),
+                relativePath = trimmed.removePrefix(ROOTFS_WORKSPACE_DIR).trimStart('/'),
+            )
+        }
+
         // /sdcard 部分挂载防护: 未挂载的 /sdcard 子路径显式报错, 而不是静默落进沙盒占位目录
         if (trimmed == "/sdcard" || trimmed.startsWith("/sdcard/")) {
             val sdcardTargets = (mounts + extraBindMounts)
