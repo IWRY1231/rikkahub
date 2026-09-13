@@ -213,7 +213,6 @@ fun WorkspaceDetailPage(id: String) {
                     installProgress = installProgress,
                     onInstallRootfs = { showInstallDialog = true },
                     onToolApprovalChange = vm::setToolApproval,
-                    onAndroidLocalAccessChange = vm::setAndroidLocalAccess,
                     onSdcardSubPathChange = vm::setSdcardSubPath,
                     onShellCompatibilityModeChange = vm::setShellCompatibilityMode,
                 )
@@ -358,7 +357,6 @@ private fun WorkspaceBasicPage(
     installProgress: RootfsInstallProgress?,
     onInstallRootfs: () -> Unit,
     onToolApprovalChange: (String, Boolean) -> Unit,
-    onAndroidLocalAccessChange: (Boolean) -> Unit,
     onSdcardSubPathChange: (String?) -> Unit,
     onShellCompatibilityModeChange: (Boolean) -> Unit,
 ) {
@@ -416,7 +414,7 @@ private fun WorkspaceBasicPage(
         }.getOrNull()
     }
 
-    // 本地目录(/local) SAF 选择器
+    // 工作区基础设置列表
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -435,32 +433,6 @@ private fun WorkspaceBasicPage(
                 item(
                     headlineContent = { Text(stringResource(R.string.workspace_detail_shell_status)) },
                     supportingContent = { Text(shellStatus?.toShellStatusLabel() ?: "-") },
-                )
-
-                // Android 本地读写工作区与本地互通（默认开启）
-                // 注: 文案放 headline 槽而非 supporting — 多行 supporting 会触发 ListItem
-                // ThreeLine 分支, trailing(开关)被顶对齐而非垂直居中(m3 1.5.0-alpha27)
-                item(
-                    headlineContent = {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                text = stringResource(R.string.workspace_detail_android_local_access),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            Text(
-                                text = stringResource(R.string.workspace_detail_android_local_access_desc),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    },
-                    trailingContent = {
-                        Switch(
-                            checked = workspace?.androidLocalAccess ?: true,
-                            onCheckedChange = onAndroidLocalAccessChange,
-                            enabled = workspace != null,
-                        )
-                    },
                 )
 
                 // 手机全部文件访问权限引导: 授权后 Linux 工作区 AI 可通过 /sdcard 读写手机全部文件

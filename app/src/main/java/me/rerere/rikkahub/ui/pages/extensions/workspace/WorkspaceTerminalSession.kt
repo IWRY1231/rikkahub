@@ -28,7 +28,6 @@ internal fun createWorkspaceTerminalSession(
     context: Context,
     root: String,
     client: TerminalSessionClient,
-    androidLocalAccess: Boolean = true,
     sdcardSubPath: String? = null,
     shellCompatibilityMode: Boolean,
 ): TerminalSession {
@@ -54,12 +53,10 @@ internal fun createWorkspaceTerminalSession(
     )
 
     // 与 AI 命令执行共用同一份 Android 本地挂载表, 保证 /skills、/tool_outputs、/upload、
-    // /sdcard 在终端与工具中行为一致; 关闭本地互通时不挂载任何 Android 本地目录
-    if (androidLocalAccess) {
-        args += buildBindMountArgs(WorkspaceMounts.androidLocalMounts(appContext))
-        WorkspaceMounts.sdcardMount(sdcardSubPath)?.let { sdcard ->
-            args += buildBindMountArgs(listOf(sdcard))
-        }
+    // /sdcard 在终端与工具中行为一致（本地互通恒开启, 无开关判定）
+    args += buildBindMountArgs(WorkspaceMounts.androidLocalMounts(appContext))
+    WorkspaceMounts.sdcardMount(sdcardSubPath)?.let { sdcard ->
+        args += buildBindMountArgs(listOf(sdcard))
     }
     listOf("/dev", "/proc", "/sys").forEach { path ->
         if (File(path).exists()) {
@@ -102,11 +99,10 @@ internal fun createWorkspaceTerminalSession(
     }
 }
 
-/** 终端会话挂载 /local 前拉取本地目录到镜像 */
+/** 终端会话启动前的 rootfs 预处理（写入 DNS + /sdcard 占位目录告示） */
 internal suspend fun prepareWorkspaceTerminalSession(
     context: Context,
     root: String,
-    androidLocalAccess: Boolean = true,
     sdcardSubPath: String? = null,
 ) {
     val appContext = context.applicationContext
@@ -120,12 +116,10 @@ internal suspend fun prepareWorkspaceTerminalSession(
         RootfsPatchOptions(nameservers = appContext.activeDnsServers())
     )
     // /sdcard 部分挂载时写入 MOUNT_NOTICE 告示(交互式终端为软提示; AI 命令走硬拦截包装器)
-    if (androidLocalAccess) {
-        ensureSdcardPlaceholderDir(
-            linuxDir,
-            partialSdcardMount = !sdcardSubPath.isNullOrBlank(),
-        )
-    }
+    ensureSdcardPlaceholderDir(
+        linuxDir,
+        partialSdcardMount = !sdcardSubPath.isNullOrBlank(),
+    )
 }
 
 internal fun workspaceRootfsReady(context: Context, root: String): Boolean {

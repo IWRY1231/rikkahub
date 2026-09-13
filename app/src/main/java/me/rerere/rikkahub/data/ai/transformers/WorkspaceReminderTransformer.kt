@@ -104,13 +104,12 @@ private fun buildWorkspacePrompt(workspace: WorkspaceEntity, cwd: String? = null
     appendLine("- Prefer `workspace_shell` for tasks that standard Unix tools handle well, and prefer `workspace_edit_file` for targeted edits over rewriting whole files.")
     appendLine("- The skills directory is mounted at `/skills`. Each skill is a subdirectory `/skills/<skill-name>/` containing a `SKILL.md` (with `name` and `description` frontmatter) plus any supporting files. Read a skill's `SKILL.md` before using it, and follow its instructions.")
     appendLine("- Files the user uploaded are mounted at `/upload`. Treat `/upload` as READ-ONLY: read uploaded files from `/upload/<file-name>`, but never modify, overwrite, or delete anything there. If you need to change an uploaded file, copy it into `/workspace` first and edit the copy.")
-    if (workspace.androidLocalAccess) {
-        if (workspace.sdcardSubPath.isNullOrBlank()) {
-            appendLine("- Your phone's storage is mounted at `/sdcard` when full storage access is granted. Read or write user files directly under `/sdcard/<path>`; if the directory appears empty, full storage access is not granted yet.")
-        } else {
-            appendLine("- The phone folder `/sdcard/${workspace.sdcardSubPath}` is mounted at the same path `/sdcard/${workspace.sdcardSubPath}` when full storage access is granted (direct access, no sync). Only this folder is available; if it appears empty, full storage access is not granted yet.")
-            appendLine("  - IMPORTANT: only `/sdcard/${workspace.sdcardSubPath}` is mounted from the phone. Any other path under `/sdcard` is a sandbox placeholder — it is NOT the phone storage, files written there will fail or be invisible to the user. Never read or write outside `/sdcard/${workspace.sdcardSubPath}`.")
-        }
+    // Android 本地互通恒开启（原总开关已停用）：/sdcard 挂载说明始终输出，仅子目录配置可变
+    if (workspace.sdcardSubPath.isNullOrBlank()) {
+        appendLine("- Your phone's storage is mounted at `/sdcard` when full storage access is granted. Read or write user files directly under `/sdcard/<path>`; if the directory appears empty, full storage access is not granted yet.")
+    } else {
+        appendLine("- The phone folder `/sdcard/${workspace.sdcardSubPath}` is mounted at the same path `/sdcard/${workspace.sdcardSubPath}` when full storage access is granted (direct access, no sync). Only this folder is available; if it appears empty, full storage access is not granted yet.")
+        appendLine("  - IMPORTANT: only `/sdcard/${workspace.sdcardSubPath}` is mounted from the phone. Any other path under `/sdcard` is a sandbox placeholder — it is NOT the phone storage, files written there will fail or be invisible to the user. Never read or write outside `/sdcard/${workspace.sdcardSubPath}`.")
     }
     if (!cwd.isNullOrBlank()) {
         appendLine("- Current working directory: `$cwd`. Use this as the default context for file operations and shell commands.")

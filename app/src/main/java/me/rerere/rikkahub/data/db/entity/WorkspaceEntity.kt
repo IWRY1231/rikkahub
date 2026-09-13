@@ -33,7 +33,9 @@ data class WorkspaceEntity(
     // 工具审批的用户覆盖项 (toolName -> needsApproval)，未覆盖的工具沿用默认值
     @ColumnInfo("tool_approvals", defaultValue = "{}")
     val toolApprovals: String = "{}",
-    // Android 本地读写工作区与本地互通（默认开启）：关闭后 shell 不再挂载/解析 Android 本地目录
+    // 【已停用】遗留列：原「Android 本地读写工作区与本地互通」开关。该能力现已恒开启，
+    // 本列不再被任何逻辑读取/写入，仅为兼容既有数据库保留（Room 要求实体列与表一致，
+    // 删列需整表重建迁移，minSdk 26 下 DROP COLUMN 不可用）。
     @ColumnInfo("android_local_access", defaultValue = "1")
     val androidLocalAccess: Boolean = true,
     // 用户通过系统目录选择器（SAF）授权的本地目录 Uri，镜像挂载到 Rootfs 的 /local；

@@ -203,16 +203,6 @@ class WorkspaceDetailVM(
         }
     }
 
-    /** 切换「Android 本地读写工作区与本地互通」开关；切换后重启终端会话以应用新挂载表 */
-    fun setAndroidLocalAccess(enabled: Boolean) {
-        viewModelScope.launch {
-            val workspace = state.value.workspace ?: return@launch
-            repository.setAndroidLocalAccess(workspace.id, enabled)
-            terminalSessionManager.closeWorkspace(workspace.root)
-            loadWorkspace()
-        }
-    }
-
     /** 设置 /sdcard 挂载子目录（直连模式）；空 = 挂载整个 /sdcard。切换后重启终端会话 */
     fun setSdcardSubPath(path: String?) {
         viewModelScope.launch {

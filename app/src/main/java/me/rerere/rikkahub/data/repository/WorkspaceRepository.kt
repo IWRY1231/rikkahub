@@ -123,13 +123,6 @@ class WorkspaceRepository(
         return true
     }
 
-    /** 切换「Android 本地读写工作区与本地互通」开关（默认开启） */
-    suspend fun setAndroidLocalAccess(id: String, enabled: Boolean): Boolean {
-        val workspace = dao.getById(id) ?: return false
-        dao.updateAndroidLocalAccess(id, enabled, System.currentTimeMillis())
-        return true
-    }
-
     /** 设置工作区的 /sdcard 挂载子目录（直连模式）。传 null/空白 = 挂载整个 /sdcard。 */
     suspend fun setSdcardSubPath(id: String, subPath: String?): Boolean {
         val workspace = dao.getById(id) ?: return false
@@ -270,11 +263,14 @@ class WorkspaceRepository(
         manager.exportFile(workspace.root, path, area, outputStream)
     }
 
-    /** 工作区的 /sdcard 直连挂载（受本地互通总开关控制 + 子目录配置）; 关闭时返回 null */
+    /**
+     * 工作区的 /sdcard 直连挂载（按子目录配置; 未配置 = 挂载整盘）。
+     * 注: 原「本地互通」总开关已停用（恒开启），故此处不再有开关判定。
+     */
     private fun sdcardBind(workspace: WorkspaceEntity): WorkspaceBindMount? =
-        if (workspace.androidLocalAccess) WorkspaceMounts.sdcardMount(workspace.sdcardSubPath) else null
+        WorkspaceMounts.sdcardMount(workspace.sdcardSubPath)
 
-    /** 按 Rootfs 内绝对路径读取文件大小, 支持 /workspace、bind mount、/local 与 Rootfs 内部路径 */
+    /** 按 Rootfs 内绝对路径读取文件大小, 支持 /workspace、各挂载点与 Rootfs 内部路径 */
     suspend fun rootfsFileSize(
         id: String,
         path: String,
@@ -282,12 +278,12 @@ class WorkspaceRepository(
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
         manager.rootfsFileSize(
-            workspace.root, path, workspace.androidLocalAccess,
+            workspace.root, path,
             extraBindMounts = listOfNotNull(sdcardBind(workspace)),
         )
     }
 
-    /** 按 Rootfs 内绝对路径导出文件内容, 支持 /workspace、bind mount、/local 与 Rootfs 内部路径 */
+    /** 按 Rootfs 内绝对路径导出文件内容, 支持 /workspace、各挂载点与 Rootfs 内部路径 */
     suspend fun exportRootfsFile(
         id: String,
         path: String,
@@ -296,7 +292,7 @@ class WorkspaceRepository(
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
         manager.exportRootfsFile(
-            workspace.root, path, outputStream, workspace.androidLocalAccess,
+            workspace.root, path, outputStream,
             extraBindMounts = listOfNotNull(sdcardBind(workspace)),
         )
     }
@@ -314,7 +310,7 @@ class WorkspaceRepository(
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
         val result = manager.writeRootfsText(
-            workspace.root, path, text, overwrite, workspace.androidLocalAccess,
+            workspace.root, path, text, overwrite,
             extraBindMounts = listOfNotNull(sdcardBind(workspace)),
         )
         result
@@ -330,7 +326,7 @@ class WorkspaceRepository(
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
         val result = manager.writeRootfsBytes(
-            workspace.root, path, bytes, overwrite, workspace.androidLocalAccess,
+            workspace.root, path, bytes, overwrite,
             extraBindMounts = listOfNotNull(sdcardBind(workspace)),
         )
         result
@@ -344,7 +340,7 @@ class WorkspaceRepository(
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
         manager.listRootfs(
-            workspace.root, path, workspace.androidLocalAccess,
+            workspace.root, path,
             extraBindMounts = listOfNotNull(sdcardBind(workspace)),
         )
     }
@@ -358,7 +354,7 @@ class WorkspaceRepository(
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
         val deleted = manager.deleteRootfs(
-            workspace.root, path, recursive, workspace.androidLocalAccess,
+            workspace.root, path, recursive,
             extraBindMounts = listOfNotNull(sdcardBind(workspace)),
         )
         deleted
@@ -374,7 +370,7 @@ class WorkspaceRepository(
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
         val result = manager.moveRootfs(
-            workspace.root, source, target, overwrite, workspace.androidLocalAccess,
+            workspace.root, source, target, overwrite,
             extraBindMounts = listOfNotNull(sdcardBind(workspace)),
         )
         result
@@ -390,7 +386,7 @@ class WorkspaceRepository(
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
         manager.readRootfsTextRange(
-            workspace.root, path, offset, length, workspace.androidLocalAccess,
+            workspace.root, path, offset, length,
             extraBindMounts = listOfNotNull(sdcardBind(workspace)),
         )
     }
@@ -428,7 +424,7 @@ class WorkspaceRepository(
     ): WorkspaceCommandResult {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         val extraBindMounts = buildList {
-            // 用户配置的 /sdcard 挂载子目录（直连, 无需镜像同步; 受本地互通总开关控制）
+            // 用户配置的 /sdcard 挂载子目录（直连）
             sdcardBind(workspace)?.let { add(it) }
         }
         // runInterruptible 让协程取消转化为线程中断，从而打断阻塞的 Process.waitFor 并杀掉进程
@@ -440,7 +436,6 @@ class WorkspaceRepository(
                 cwd,
                 timeoutMillis,
                 stdin,
-                includeAndroidLocal = workspace.androidLocalAccess,
                 extraBindMounts = extraBindMounts,
                 shellCompatibilityMode = workspace.shellCompatibilityMode,
             )

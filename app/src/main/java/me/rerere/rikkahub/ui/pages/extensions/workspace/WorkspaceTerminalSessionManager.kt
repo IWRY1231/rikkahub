@@ -122,9 +122,8 @@ class WorkspaceTerminalSessionManager internal constructor(
         }
         updateState(root) { it.copy(isCreating = true) }
 
-        // 读取工作区的本地互通配置: 开关关闭时不挂载 Android 本地目录
+        // 读取工作区的挂载配置（本地互通恒开启, 仅 /sdcard 子目录可选）
         val workspace = runCatching { workspaceRepository.getByRoot(root) }.getOrNull()
-        val androidLocalAccess = workspace?.androidLocalAccess ?: false
 
         val prepared = if (initialState.readiness == WorkspaceTerminalReadiness.Ready) {
             true
@@ -137,7 +136,6 @@ class WorkspaceTerminalSessionManager internal constructor(
                         prepareWorkspaceTerminalSession(
                             context = appContext,
                             root = root,
-                            androidLocalAccess = androidLocalAccess,
                             sdcardSubPath = workspace?.sdcardSubPath,
                         )
                         true
@@ -173,7 +171,6 @@ class WorkspaceTerminalSessionManager internal constructor(
                 context = appContext,
                 root = root,
                 client = client,
-                androidLocalAccess = androidLocalAccess,
                 sdcardSubPath = workspace?.sdcardSubPath,
                 shellCompatibilityMode = shellCompatibilityMode,
             )
