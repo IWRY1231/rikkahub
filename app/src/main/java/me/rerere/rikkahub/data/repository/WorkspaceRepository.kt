@@ -130,59 +130,6 @@ class WorkspaceRepository(
         return true
     }
 
-    /**
-     * 设置工作区的本地目录（SAF tree Uri）。传 null 表示解除授权。
-     * 解除时清空镜像，避免残留内容被误挂载。
-     */
-    suspend fun setLocalDirectory(id: String, uri: String?): Boolean {
-        val workspace = dao.getById(id) ?: return false
-        dao.updateLocalDirectory(id, uri, System.currentTimeMillis())
-        withContext(Dispatchers.IO) {
-            if (uri.isNullOrBlank()) {
-                manager.localDir(workspace.root).deleteRecursively()
-            }
-        }
-        return true
-    }
-
-    /**
-     * 为工作区准备 /local 镜像：若已授权 SAF 目录且本地互通开启，
-     * 先把本地目录最新内容拉取到镜像，并返回 tree Uri（挂载 /local 用）。
-     */
-    private suspend fun prepareLocalMirror(workspace: WorkspaceEntity): Uri? {
-        if (!workspace.androidLocalAccess) return null
-        val uriString = workspace.localDirectoryUri
-        if (uriString.isNullOrBlank()) return null
-        val treeUri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return null
-        if (!LocalDirectorySync.hasPersistedPermission(context, treeUri)) return null
-        val mirror = manager.localDir(workspace.root)
-        mirror.mkdirs()
-        LocalDirectorySync.syncToMirror(context, treeUri, mirror)
-        return treeUri
-    }
-
-    /** 操作 /local 路径前先同步本地目录 -> 镜像，返回 tree Uri（非 /local 路径返回 null） */
-    private suspend fun syncLocalMirrorBefore(workspace: WorkspaceEntity, path: String): Uri? {
-        val localDir = WorkspaceManager.LOCAL_DIR
-        if (!path.startsWith("$localDir/") && path != localDir) return null
-        return try {
-            prepareLocalMirror(workspace)
-        } catch (e: Throwable) {
-            Log.w(TAG, "prepareLocalMirror failed", e)
-            null
-        }
-    }
-
-    /** 操作 /local 路径后把镜像变更写回本地目录 */
-    private suspend fun syncLocalMirrorAfter(workspace: WorkspaceEntity, treeUri: Uri?) {
-        if (treeUri == null) return
-        try {
-            LocalDirectorySync.syncMirrorBack(context, treeUri, manager.localDir(workspace.root))
-        } catch (e: Throwable) {
-            Log.w(TAG, "syncMirrorBack failed", e)
-        }
-    }
-
     /** 设置工作区的 /sdcard 挂载子目录（直连模式）。传 null/空白 = 挂载整个 /sdcard。 */
     suspend fun setSdcardSubPath(id: String, subPath: String?): Boolean {
         val workspace = dao.getById(id) ?: return false
@@ -192,22 +139,6 @@ class WorkspaceRepository(
             ?.takeIf { it.isNotEmpty() }
         dao.updateSdcardSubPath(id, cleaned, System.currentTimeMillis())
         return true
-    }
-
-    /** 把 /local 镜像中的变更写回本地目录（终端会话结束时调用） */
-    suspend fun syncLocalMirrorBack(root: String) {
-        val workspace = dao.getByRoot(root) ?: return
-        val uriString = workspace.localDirectoryUri
-        if (uriString.isNullOrBlank() || !workspace.androidLocalAccess) return
-        val treeUri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return
-        if (!LocalDirectorySync.hasPersistedPermission(context, treeUri)) return
-        withContext(Dispatchers.IO) {
-            try {
-                LocalDirectorySync.syncMirrorBack(context, treeUri, manager.localDir(root))
-            } catch (e: Throwable) {
-                Log.w(TAG, "syncLocalMirrorBack failed", e)
-            }
-        }
     }
 
     suspend fun installRootfs(
@@ -350,7 +281,6 @@ class WorkspaceRepository(
     ): Long = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        syncLocalMirrorBefore(workspace, path)
         manager.rootfsFileSize(
             workspace.root, path, workspace.androidLocalAccess,
             extraBindMounts = listOfNotNull(sdcardBind(workspace)),
@@ -365,7 +295,6 @@ class WorkspaceRepository(
     ) = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        syncLocalMirrorBefore(workspace, path)
         manager.exportRootfsFile(
             workspace.root, path, outputStream, workspace.androidLocalAccess,
             extraBindMounts = listOfNotNull(sdcardBind(workspace)),
@@ -384,12 +313,10 @@ class WorkspaceRepository(
     ): WorkspaceFileEntry = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        val treeUri = syncLocalMirrorBefore(workspace, path)
         val result = manager.writeRootfsText(
             workspace.root, path, text, overwrite, workspace.androidLocalAccess,
             extraBindMounts = listOfNotNull(sdcardBind(workspace)),
         )
-        syncLocalMirrorAfter(workspace, treeUri)
         result
     }
 
@@ -402,12 +329,10 @@ class WorkspaceRepository(
     ): WorkspaceFileEntry = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        val treeUri = syncLocalMirrorBefore(workspace, path)
         val result = manager.writeRootfsBytes(
             workspace.root, path, bytes, overwrite, workspace.androidLocalAccess,
             extraBindMounts = listOfNotNull(sdcardBind(workspace)),
         )
-        syncLocalMirrorAfter(workspace, treeUri)
         result
     }
 
@@ -418,7 +343,6 @@ class WorkspaceRepository(
     ): List<WorkspaceFileEntry> = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        syncLocalMirrorBefore(workspace, path)
         manager.listRootfs(
             workspace.root, path, workspace.androidLocalAccess,
             extraBindMounts = listOfNotNull(sdcardBind(workspace)),
@@ -433,13 +357,10 @@ class WorkspaceRepository(
     ): Boolean = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        val treeUri = syncLocalMirrorBefore(workspace, path)
         val deleted = manager.deleteRootfs(
             workspace.root, path, recursive, workspace.androidLocalAccess,
             extraBindMounts = listOfNotNull(sdcardBind(workspace)),
         )
-        // 删除后把镜像/手机侧同步到一致状态(源与目标都要检查)
-        syncLocalMirrorAfter(workspace, treeUri)
         deleted
     }
 
@@ -452,12 +373,10 @@ class WorkspaceRepository(
     ): WorkspaceFileEntry = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        val treeUri = syncLocalMirrorBefore(workspace, source)
         val result = manager.moveRootfs(
             workspace.root, source, target, overwrite, workspace.androidLocalAccess,
             extraBindMounts = listOfNotNull(sdcardBind(workspace)),
         )
-        syncLocalMirrorAfter(workspace, treeUri)
         result
     }
 
@@ -470,7 +389,6 @@ class WorkspaceRepository(
     ): RootfsTextSlice = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        syncLocalMirrorBefore(workspace, path)
         manager.readRootfsTextRange(
             workspace.root, path, offset, length, workspace.androidLocalAccess,
             extraBindMounts = listOfNotNull(sdcardBind(workspace)),
@@ -509,26 +427,7 @@ class WorkspaceRepository(
         stdin: ByteArray? = null,
     ): WorkspaceCommandResult {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
-        // 仅当命令确实涉及 /local 时才同步本地目录到镜像并挂载 /local，
-        // 避免每次执行命令（如开发工具检测）都全量同步 SAF 目录导致卡死
-        val localDir = WorkspaceManager.LOCAL_DIR
-        // 边界感知匹配, 避免把 /usr/local 之类误判为 /local 引用而触发不必要的全量同步
-        val touchesLocal = Regex("(^|[^A-Za-z0-9._-])${Regex.escape(localDir)}(/|\\b)")
-            .containsMatchIn(command)
-        val localUri = if (touchesLocal) {
-            try {
-                prepareLocalMirror(workspace)
-            } catch (e: Throwable) {
-                Log.w(TAG, "prepareLocalMirror failed", e)
-                null
-            }
-        } else {
-            null
-        }
         val extraBindMounts = buildList {
-            if (localUri != null) {
-                add(WorkspaceBindMount(source = manager.localDir(workspace.root), target = localDir))
-            }
             // 用户配置的 /sdcard 挂载子目录（直连, 无需镜像同步; 受本地互通总开关控制）
             sdcardBind(workspace)?.let { add(it) }
         }
@@ -545,9 +444,6 @@ class WorkspaceRepository(
                 extraBindMounts = extraBindMounts,
                 shellCompatibilityMode = workspace.shellCompatibilityMode,
             )
-        }
-        if (localUri != null) {
-            syncLocalMirrorAfter(workspace, localUri)
         }
         return result
     }

@@ -134,18 +134,21 @@ class RootfsPathResolutionTest {
     }
 
     @Test
-    fun localDirectoryMirrorResolvesToLocalArea() {
+    fun removedLocalChannelIsRejectedLoudly() {
+        // /local（旧的 SAF 镜像通道）已随功能下线移除: 必须显式报错,
+        // 而不是静默落到 Rootfs 的 /local 占位目录
         manager = createManager()
-        File(manager.localDir(root), "notes").mkdirs()
-        File(manager.localDir(root), "notes/todo.md").writeText("hi")
 
-        val location = manager.resolveRootfsPath(root, "/local/notes/todo.md")
-        assertEquals(manager.localDir(root), location.rootDir)
-        assertEquals("notes/todo.md", location.relativePath)
+        val error = assertThrows(IllegalStateException::class.java) {
+            manager.resolveRootfsPath(root, "/local/notes/todo.md")
+        }
+        assertTrue(error.message!!.contains("/local"))
+        assertTrue(error.message!!.contains("no longer available"))
 
-        val buffer = ByteArrayOutputStream()
-        manager.exportRootfsFile(root, "/local/notes/todo.md", buffer)
-        assertEquals("hi", buffer.toString(Charsets.UTF_8.name()))
+        val error2 = assertThrows(IllegalStateException::class.java) {
+            manager.resolveRootfsPath(root, "/local")
+        }
+        assertTrue(error2.message!!.contains("no longer available"))
     }
 
     @Test

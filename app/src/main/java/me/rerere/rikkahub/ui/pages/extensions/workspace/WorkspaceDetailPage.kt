@@ -214,7 +214,6 @@ fun WorkspaceDetailPage(id: String) {
                     onInstallRootfs = { showInstallDialog = true },
                     onToolApprovalChange = vm::setToolApproval,
                     onAndroidLocalAccessChange = vm::setAndroidLocalAccess,
-                    onLocalDirectoryChange = vm::setLocalDirectory,
                     onSdcardSubPathChange = vm::setSdcardSubPath,
                     onShellCompatibilityModeChange = vm::setShellCompatibilityMode,
                 )
@@ -360,7 +359,6 @@ private fun WorkspaceBasicPage(
     onInstallRootfs: () -> Unit,
     onToolApprovalChange: (String, Boolean) -> Unit,
     onAndroidLocalAccessChange: (Boolean) -> Unit,
-    onLocalDirectoryChange: (String?) -> Unit,
     onSdcardSubPathChange: (String?) -> Unit,
     onShellCompatibilityModeChange: (Boolean) -> Unit,
 ) {
@@ -419,23 +417,6 @@ private fun WorkspaceBasicPage(
     }
 
     // 本地目录(/local) SAF 选择器
-    val localDirPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        if (uri != null) {
-            val resolver = context.contentResolver
-            try {
-                resolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-                )
-            } catch (e: SecurityException) {
-                Log.w("WorkspaceDetail", "takePersistableUriPermission failed: $uri", e)
-            }
-            onLocalDirectoryChange(uri.toString())
-        }
-    }
-
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -566,45 +547,6 @@ private fun WorkspaceBasicPage(
                                         )
                                     }
                                 }
-                            }
-                        }
-                    },
-                )
-
-                // 本地目录互通: SAF 目录授权, 挂载为 /local, 不依赖「所有文件访问」权限
-                item(
-                    headlineContent = {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                text = stringResource(R.string.workspace_detail_local_directory),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            Text(
-                                text = if (workspace?.localDirectoryUri.isNullOrBlank()) {
-                                    stringResource(R.string.workspace_detail_local_directory_desc)
-                                } else {
-                                    stringResource(R.string.workspace_detail_local_directory_set)
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            if (!workspace?.localDirectoryUri.isNullOrBlank()) {
-                                Text(
-                                    text = stringResource(R.string.workspace_detail_local_directory_note),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        }
-                    },
-                    trailingContent = {
-                        if (workspace?.localDirectoryUri.isNullOrBlank()) {
-                            TextButton(onClick = { localDirPicker.launch(null) }) {
-                                Text(stringResource(R.string.workspace_detail_local_directory_pick))
-                            }
-                        } else {
-                            TextButton(onClick = { onLocalDirectoryChange(null) }) {
-                                Text(stringResource(R.string.workspace_detail_local_directory_clear))
                             }
                         }
                     },

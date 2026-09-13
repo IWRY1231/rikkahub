@@ -1218,12 +1218,6 @@
   <string name="workspace_detail_sdcard_subpath_pick">Pick folder</string>
   <string name="workspace_detail_sdcard_subpath_reset">Reset</string>
   <string name="workspace_detail_sdcard_subpath_unsupported">Only folders on the phone\'s internal storage are supported</string>
-  <string name="workspace_detail_local_directory">Local directory</string>
-  <string name="workspace_detail_local_directory_desc">Pick a folder on your phone to sync into the workspace as /local. No all-files permission needed</string>
-  <string name="workspace_detail_local_directory_set">Synced into the workspace as /local</string>
-  <string name="workspace_detail_local_directory_pick">Pick folder</string>
-  <string name="workspace_detail_local_directory_clear">Remove</string>
-  <string name="workspace_detail_local_directory_note">The folder and /local are synced before and after each command</string>
   <string name="workspace_detail_loading">Loading</string>
   <string name="workspace_detail_enable_shell">Enable Shell</string>
   <string name="workspace_detail_enable_shell_desc">Allow this workspace to run a terminal environment using local Rootfs</string>

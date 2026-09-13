@@ -16,7 +16,6 @@ import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
 import me.rerere.rikkahub.data.files.WorkspaceMounts
-import me.rerere.rikkahub.data.repository.LocalDirectorySync
 import me.rerere.workspace.RootfsPatchOptions
 import me.rerere.workspace.RootfsPatcher
 import me.rerere.workspace.WorkspaceBindMount
@@ -30,7 +29,6 @@ internal fun createWorkspaceTerminalSession(
     root: String,
     client: TerminalSessionClient,
     androidLocalAccess: Boolean = true,
-    localDirectoryUri: String? = null,
     sdcardSubPath: String? = null,
     shellCompatibilityMode: Boolean,
 ): TerminalSession {
@@ -56,14 +54,11 @@ internal fun createWorkspaceTerminalSession(
     )
 
     // 与 AI 命令执行共用同一份 Android 本地挂载表, 保证 /skills、/tool_outputs、/upload、
-    // /sdcard 与 /local 在终端与工具中行为一致; 关闭本地互通时不挂载任何 Android 本地目录
+    // /sdcard 在终端与工具中行为一致; 关闭本地互通时不挂载任何 Android 本地目录
     if (androidLocalAccess) {
         args += buildBindMountArgs(WorkspaceMounts.androidLocalMounts(appContext))
         WorkspaceMounts.sdcardMount(sdcardSubPath)?.let { sdcard ->
             args += buildBindMountArgs(listOf(sdcard))
-        }
-        localDirMirror(appContext, root, localDirectoryUri)?.let { mirror ->
-            args += buildBindMountArgs(listOf(WorkspaceBindMount(mirror, WorkspaceManager.LOCAL_DIR)))
         }
     }
     listOf("/dev", "/proc", "/sys").forEach { path ->
@@ -112,7 +107,6 @@ internal suspend fun prepareWorkspaceTerminalSession(
     context: Context,
     root: String,
     androidLocalAccess: Boolean = true,
-    localDirectoryUri: String? = null,
     sdcardSubPath: String? = null,
 ) {
     val appContext = context.applicationContext
@@ -132,21 +126,6 @@ internal suspend fun prepareWorkspaceTerminalSession(
             partialSdcardMount = !sdcardSubPath.isNullOrBlank(),
         )
     }
-    val mirror = localDirMirror(appContext, root, localDirectoryUri)
-    if (mirror != null && androidLocalAccess) {
-        mirror.mkdirs()
-        val treeUri = runCatching { localDirectoryUri!!.toUri() }.getOrNull()
-        if (treeUri != null && LocalDirectorySync.hasPersistedPermission(appContext, treeUri)) {
-            runCatching { LocalDirectorySync.syncToMirror(appContext, treeUri, mirror) }
-                .onFailure { Log.w(TAG, "syncToMirror failed", it) }
-        }
-    }
-}
-
-/** /local 镜像目录（内容来自 SAF 授权的本地目录，命令执行后同步回手机） */
-internal fun localDirMirror(appContext: Context, root: String, localDirectoryUri: String?): File? {
-    if (localDirectoryUri.isNullOrBlank()) return null
-    return File(File(File(appContext.filesDir, "workspaces"), root), "local")
 }
 
 internal fun workspaceRootfsReady(context: Context, root: String): Boolean {

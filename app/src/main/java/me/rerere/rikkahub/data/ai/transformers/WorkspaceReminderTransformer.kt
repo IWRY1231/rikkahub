@@ -111,9 +111,6 @@ private fun buildWorkspacePrompt(workspace: WorkspaceEntity, cwd: String? = null
             appendLine("- The phone folder `/sdcard/${workspace.sdcardSubPath}` is mounted at the same path `/sdcard/${workspace.sdcardSubPath}` when full storage access is granted (direct access, no sync). Only this folder is available; if it appears empty, full storage access is not granted yet.")
             appendLine("  - IMPORTANT: only `/sdcard/${workspace.sdcardSubPath}` is mounted from the phone. Any other path under `/sdcard` is a sandbox placeholder — it is NOT the phone storage, files written there will fail or be invisible to the user. Never read or write outside `/sdcard/${workspace.sdcardSubPath}`.")
         }
-        if (!workspace.localDirectoryUri.isNullOrBlank()) {
-            appendLine("- A user-selected local folder is mounted at `/local`. It stays in sync: files you write under `/local` are copied back to the phone folder, and files the user places there are available to you under `/local`.")
-        }
     }
     if (!cwd.isNullOrBlank()) {
         appendLine("- Current working directory: `$cwd`. Use this as the default context for file operations and shell commands.")

@@ -1201,12 +1201,6 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="workspace_detail_sdcard_subpath_pick">选择文件夹</string>
   <string name="workspace_detail_sdcard_subpath_reset">重置</string>
   <string name="workspace_detail_sdcard_subpath_unsupported">仅支持选择手机内置存储中的文件夹</string>
-  <string name="workspace_detail_local_directory">本地目录</string>
-  <string name="workspace_detail_local_directory_desc">选择手机上的一个文件夹同步到工作区作为 /local。无需所有文件权限</string>
-  <string name="workspace_detail_local_directory_set">已同步到工作区作为 /local</string>
-  <string name="workspace_detail_local_directory_pick">选择文件夹</string>
-  <string name="workspace_detail_local_directory_clear">移除</string>
-  <string name="workspace_detail_local_directory_note">文件夹与 /local 之间会在命令执行前后进行同步</string>
   <string name="workspace_detail_loading">加载中</string>
   <string name="workspace_detail_enable_shell">启用 Shell</string>
   <string name="workspace_detail_enable_shell_desc">允许此工作区使用本地Rootfs运行终端环境</string>

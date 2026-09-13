@@ -122,11 +122,9 @@ class WorkspaceTerminalSessionManager internal constructor(
         }
         updateState(root) { it.copy(isCreating = true) }
 
-        // 读取工作区的本地互通配置: 开关关闭时不挂载 Android 本地目录,
-        // 已授权 SAF 本地目录时创建会话前先把手机目录拉取到 /local 镜像
+        // 读取工作区的本地互通配置: 开关关闭时不挂载 Android 本地目录
         val workspace = runCatching { workspaceRepository.getByRoot(root) }.getOrNull()
         val androidLocalAccess = workspace?.androidLocalAccess ?: false
-        val localDirectoryUri = workspace?.localDirectoryUri
 
         val prepared = if (initialState.readiness == WorkspaceTerminalReadiness.Ready) {
             true
@@ -140,7 +138,6 @@ class WorkspaceTerminalSessionManager internal constructor(
                             context = appContext,
                             root = root,
                             androidLocalAccess = androidLocalAccess,
-                            localDirectoryUri = localDirectoryUri,
                             sdcardSubPath = workspace?.sdcardSubPath,
                         )
                         true
@@ -177,7 +174,6 @@ class WorkspaceTerminalSessionManager internal constructor(
                 root = root,
                 client = client,
                 androidLocalAccess = androidLocalAccess,
-                localDirectoryUri = localDirectoryUri,
                 sdcardSubPath = workspace?.sdcardSubPath,
                 shellCompatibilityMode = shellCompatibilityMode,
             )
@@ -231,11 +227,6 @@ class WorkspaceTerminalSessionManager internal constructor(
                     if (tab.id == tabId) tab.copy(finished = true) else tab
                 },
             ))
-        }
-        // 会话结束后把 /local 镜像中的变更写回手机本地目录
-        appScope.launch {
-            runCatching { workspaceRepository.syncLocalMirrorBack(root) }
-                .onFailure { Log.w(TAG, "syncLocalMirrorBack failed for $root", it) }
         }
     }
 

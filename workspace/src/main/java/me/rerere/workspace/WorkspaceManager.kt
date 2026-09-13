@@ -40,9 +40,6 @@ class WorkspaceManager(
 
     fun tempDir(root: String): File = File(workspaceDir(root), TEMP_DIR)
 
-    /** 用户本地目录（SAF 授权）在 App 内的镜像目录，挂载到 Rootfs 的 /local */
-    fun localDir(root: String): File = File(workspaceDir(root), LOCAL_DIR)
-
     fun hasRootfs(root: String): Boolean = File(linuxDir(root), "bin/sh").isFile
 
     fun deleteWorkspace(root: String): Boolean = workspaceDir(root).deleteRecursively()
@@ -185,11 +182,12 @@ class WorkspaceManager(
             }
         }
 
-        // 用户通过系统目录选择器授权的本地目录镜像（/local），可在 shell 与文件工具中读写
-        if (trimmed == LOCAL_DIR || trimmed.startsWith("$LOCAL_DIR/")) {
-            return RootfsLocation(
-                rootDir = localDir(root),
-                relativePath = trimmed.removePrefix(LOCAL_DIR).trimStart('/'),
+        // /local（旧的 SAF 本地目录镜像通道）已随功能下线**整体移除**：这里显式报错,
+        // 避免静默落到 Rootfs 里的 /local 占位目录（那样文件既到不了手机也没人清理）。
+        if (trimmed == REMOVED_LOCAL_DIR || trimmed.startsWith("$REMOVED_LOCAL_DIR/")) {
+            error(
+                "/local is no longer available: the local-folder mirror feature was removed. " +
+                    "Use /workspace for the workspace files area, or /sdcard for phone storage."
             )
         }
 
@@ -459,7 +457,8 @@ class WorkspaceManager(
         const val ROOTFS_WORKSPACE_DIR = "/workspace"
 
         /** 用户本地目录镜像的挂载点（/local -> 手机本地目录） */
-        const val LOCAL_DIR = "/local"
+        /** 已下线的 /local 通道(仅用于显式拒绝, 见 resolveRootfsPath) */
+        private const val REMOVED_LOCAL_DIR = "/local"
 
         /** 由宿主机透传的内核伪文件系统, 只能通过 shell 访问 */
         val KERNEL_FS_MOUNTS = listOf("/dev", "/proc", "/sys")

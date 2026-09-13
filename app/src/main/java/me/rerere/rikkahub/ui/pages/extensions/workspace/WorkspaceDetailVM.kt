@@ -213,16 +213,6 @@ class WorkspaceDetailVM(
         }
     }
 
-    /** 设置 SAF 授权的本地目录（挂载为 /local）；传 null 解除授权并清空镜像 */
-    fun setLocalDirectory(uri: String?) {
-        viewModelScope.launch {
-            val workspace = state.value.workspace ?: return@launch
-            repository.setLocalDirectory(workspace.id, uri)
-            terminalSessionManager.closeWorkspace(workspace.root)
-            loadWorkspace()
-        }
-    }
-
     /** 设置 /sdcard 挂载子目录（直连模式）；空 = 挂载整个 /sdcard。切换后重启终端会话 */
     fun setSdcardSubPath(path: String?) {
         viewModelScope.launch {
