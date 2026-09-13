@@ -61,7 +61,7 @@ import me.rerere.rikkahub.ui.theme.LocalDarkMode
 import me.rerere.rikkahub.utils.plus
 import me.rerere.search.DoubaoSearchMode
 import me.rerere.search.SearchCommonOptions
-import me.rerere.search.SearchKeyUsage
+import me.rerere.search.SearchUsage
 import me.rerere.search.SearchResult
 import me.rerere.search.SearchService
 import me.rerere.search.SearchServiceOptions
@@ -359,15 +359,15 @@ internal fun TavilyOptions(
     options: SearchServiceOptions.TavilyOptions,
     onUpdateOptions: (SearchServiceOptions.TavilyOptions) -> Unit
 ) {
-    // 额度查询: 逐把 Key 请求 Tavily /usage, 仅展示每把 Key 的已用/上限
+    // 额度查询: 请求 Tavily /usage, 展示账户口径(account.plan_usage/plan_limit, 与官网一致)
     val scope = rememberCoroutineScope()
     var usageLoading by remember { mutableStateOf(false) }
-    var usageItems by remember { mutableStateOf<List<SearchKeyUsage>?>(null) }
+    var usage by remember { mutableStateOf<SearchUsage?>(null) }
     var usageError by remember { mutableStateOf<String?>(null) }
 
     // Key 变更后清空旧结果, 避免展示与当前 Key 不符的额度
     LaunchedEffect(options.apiKey) {
-        usageItems = null
+        usage = null
         usageError = null
     }
 
@@ -420,9 +420,9 @@ internal fun TavilyOptions(
                     usageError = null
                     scope.launch {
                         SearchService.getService(options).getUsage(options)
-                            .onSuccess { usageItems = it.items }
+                            .onSuccess { usage = it }
                             .onFailure {
-                                usageItems = null
+                                usage = null
                                 usageError = it.message ?: it.toString()
                             }
                         usageLoading = false
@@ -443,7 +443,8 @@ internal fun TavilyOptions(
     ) {
         val unlimited = stringResource(R.string.search_detail_usage_unlimited)
         val lineFormat = stringResource(R.string.search_detail_usage_used_of_limit)
-        val showKeyLabel = (usageItems?.size ?: 0) > 1
+        val keyUsedFormat = stringResource(R.string.search_detail_usage_used)
+        val current = usage
         when {
             usageError != null -> Text(
                 text = usageError ?: "",
@@ -451,22 +452,32 @@ internal fun TavilyOptions(
                 color = MaterialTheme.colorScheme.error
             )
 
-            usageItems != null -> usageItems?.forEach { item ->
-                val error = item.error
-                val text = if (error != null) {
-                    error
-                } else {
-                    lineFormat.format(
-                        item.used?.toString() ?: "-",
-                        item.limit?.toString() ?: unlimited
-                    )
-                }
+            current != null -> {
+                // 账户口径: 与 Tavily 官网首页显示一致
                 Text(
-                    text = if (showKeyLabel) "${item.label}  $text" else text,
+                    text = lineFormat.format(
+                        current.used?.toString() ?: "-",
+                        current.limit?.toString() ?: unlimited
+                    ),
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (error != null) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                // 多 Key 时才补充每把 Key 各自的已用(上限不重复)
+                if (current.keys.size > 1) {
+                    current.keys.forEach { key ->
+                        val keyError = key.error
+                        Text(
+                            text = if (keyError != null) {
+                                "${key.label}  $keyError"
+                            } else {
+                                "${key.label}  " + keyUsedFormat.format(key.used?.toString() ?: "-")
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (keyError != null) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         }
     }

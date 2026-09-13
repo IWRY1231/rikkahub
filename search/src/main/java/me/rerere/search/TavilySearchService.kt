@@ -169,7 +169,8 @@ object TavilySearchService : SearchService<SearchServiceOptions.TavilyOptions> {
 
     /**
      * 额度查询: 逐把 Key 请求 GET https://api.tavily.com/usage
-     * 单把 Key 失败只影响该项(以 error 回传), 不中断其余 Key
+     * 展示口径 = **账户级** account.plan_usage/plan_limit(与 Tavily 官网一致),
+     * 取不到时回退该 Key 的 key.usage/key.limit; 单把 Key 失败只影响该项, 不中断其余 Key
      */
     override suspend fun getUsage(
         serviceOptions: SearchServiceOptions.TavilyOptions
@@ -177,11 +178,22 @@ object TavilySearchService : SearchService<SearchServiceOptions.TavilyOptions> {
         runCatching {
             val keys = KeyRoulette.split(serviceOptions.apiKey)
             if (keys.isEmpty()) error("API key is empty")
-            SearchUsage(items = keys.map { queryKeyUsage(it) })
+            val results = keys.map { queryKeyUsage(it) }
+            val account = results.firstNotNullOfOrNull { it.account }
+            val firstKey = results.firstOrNull { it.key.used != null || it.key.limit != null }?.key
+            if (account == null && firstKey == null) {
+                // 全部失败: 抛出首条失败原因, 由 UI 统一展示
+                error(results.firstOrNull { it.key.error != null }?.key?.error ?: "invalid usage response")
+            }
+            SearchUsage(
+                used = account?.planUsage ?: firstKey?.used,
+                limit = account?.planLimit ?: firstKey?.limit,
+                keys = results.map { it.key },
+            )
         }
     }
 
-    private suspend fun queryKeyUsage(apiKey: String): SearchKeyUsage {
+    private suspend fun queryKeyUsage(apiKey: String): KeyQueryResult {
         val label = maskApiKey(apiKey)
         return try {
             val request = Request.Builder()
@@ -191,18 +203,25 @@ object TavilySearchService : SearchService<SearchServiceOptions.TavilyOptions> {
                 .build()
             val response = httpClient.newCall(request).await()
             if (!response.isSuccessful) {
-                return SearchKeyUsage(label = label, error = usageErrorMessage(response))
+                return KeyQueryResult(
+                    key = SearchKeyUsage(label = label, error = usageErrorMessage(response)),
+                    account = null,
+                )
             }
-            val usage = json.decodeFromString<UsageResponse>(response.body.string())
-            val keyUsage = usage.key
-                ?: return SearchKeyUsage(label = label, error = "invalid usage response")
-            SearchKeyUsage(
-                label = label,
-                used = keyUsage.usage,
-                limit = keyUsage.limit,
+            val body = json.decodeFromString<UsageResponse>(response.body.string())
+            KeyQueryResult(
+                key = SearchKeyUsage(
+                    label = label,
+                    used = body.key?.usage,
+                    limit = body.key?.limit,
+                ),
+                account = body.account,
             )
         } catch (e: Exception) {
-            SearchKeyUsage(label = label, error = e.message ?: "unknown error")
+            KeyQueryResult(
+                key = SearchKeyUsage(label = label, error = e.message ?: "unknown error"),
+                account = null,
+            )
         }
     }
 
@@ -239,6 +258,7 @@ object TavilySearchService : SearchService<SearchServiceOptions.TavilyOptions> {
     @Serializable
     data class UsageResponse(
         val key: UsageKey? = null,
+        val account: UsageAccount? = null,
     )
 
     @Serializable
@@ -246,7 +266,20 @@ object TavilySearchService : SearchService<SearchServiceOptions.TavilyOptions> {
         val usage: Long? = null,
         val limit: Long? = null,
     )
+
+    /** 账户级额度(官网口径): plan_limit 为 null 时表示不限量 */
+    @Serializable
+    data class UsageAccount(
+        @SerialName("plan_usage") val planUsage: Long? = null,
+        @SerialName("plan_limit") val planLimit: Long? = null,
+    )
 }
+
+/** 单把 Key 的查询结果(含账户级信息; 同一账户下各 Key 返回的 account 一致) */
+private data class KeyQueryResult(
+    val key: SearchKeyUsage,
+    val account: TavilySearchService.UsageAccount?,
+)
 
 /** 掩码 Key, 仅用于额度列表区分每一行(不展示完整密钥) */
 private fun maskApiKey(apiKey: String): String =
