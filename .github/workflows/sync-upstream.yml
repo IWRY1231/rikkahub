@@ -197,6 +197,10 @@ jobs:
           echo "version_code=${VERSION_CODE:-0}" >> "$GITHUB_OUTPUT"
           echo "ts=$TS" >> "$GITHUB_OUTPUT"
 
+      - name: Run workspace unit tests
+        if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
+        run: ./gradlew --no-daemon :workspace:testDebugUnitTest
+
       - name: Build release APK
         if: steps.sync.outputs.updated == 'true' && env.skip_build != 'true'
         run: ./gradlew --no-daemon assembleRelease

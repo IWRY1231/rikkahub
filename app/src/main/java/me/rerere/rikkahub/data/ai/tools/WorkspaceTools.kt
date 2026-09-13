@@ -1,5 +1,8 @@
 package me.rerere.rikkahub.data.ai.tools
 
+import android.content.Context
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.JsonObjectBuilder
@@ -11,6 +14,10 @@ import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.DiffMetadata
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.toMetadata
+import me.rerere.document.DocxParser
+import me.rerere.document.EpubParser
+import me.rerere.document.PdfParser
+import me.rerere.document.PptxParser
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.utils.generateUnifiedDiff
@@ -18,14 +25,24 @@ import me.rerere.workspace.WorkspaceFileEntry
 import me.rerere.workspace.WorkspaceManager
 import org.koin.java.KoinJavaComponent.getKoin
 import java.io.ByteArrayOutputStream
+import java.io.File
 
 private const val SHELL_TIMEOUT_MAX_SECONDS = 600L
 private const val MAX_READ_FILE_BYTES = 8L * 1024 * 1024
 
+/** 文档(PDF/DOCX/PPTX/EPUB)提取文本的字符数上限, 防止超大文档撑爆上下文 */
+private const val MAX_DOCUMENT_CHARS = 200_000
+
+/** 走文档解析而非按文本读取的扩展名 */
+private val DOCUMENT_EXTENSIONS = setOf("pdf", "docx", "pptx", "epub")
+
 val WorkspaceToolDefaultApprovals: Map<String, Boolean> = mapOf(
     "workspace_read_file" to false,
+    "workspace_list_files" to false,
     "workspace_write_file" to false,
     "workspace_edit_file" to false,
+    "workspace_delete_file" to true,
+    "workspace_move_file" to true,
     "workspace_shell" to true,
 )
 
@@ -45,8 +62,11 @@ suspend fun createWorkspaceTools(
 
     return listOf(
         createReadFileTool(workspaceId, ::needsApproval, workspaceRepository),
+        createListFilesTool(workspaceId, ::needsApproval, workspaceRepository),
         createWriteFileTool(workspaceId, ::needsApproval, workspaceRepository),
         createEditFileTool(workspaceId, ::needsApproval, workspaceRepository),
+        createDeleteFileTool(workspaceId, ::needsApproval, workspaceRepository),
+        createMoveFileTool(workspaceId, ::needsApproval, workspaceRepository),
         createShellTool(workspaceId, ::needsApproval, workspaceRepository, shellCwd),
     )
 }
@@ -69,30 +89,71 @@ private fun createReadFileTool(
         Use /workspace for the workspace files area.
         Phone storage is mounted at /sdcard when granted.
         Supports UTF-8 text files and image files (png, jpg, jpeg, gif, webp, bmp, svg, heic, heif, avif, ico).
+        For large text files pass offset/limit to read a byte range instead of the whole file.
+        PDF/DOCX/PPTX/EPUB files are parsed to text automatically.
     """.trimIndent().replace("\n", " "),
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
                 putPathProperty(required = true)
+                put("offset", buildJsonObject {
+                    put("type", "integer")
+                    put(
+                        "description",
+                        "Byte offset to start reading from. Defaults to 0. Use with limit to read large files in slices."
+                    )
+                })
+                put("limit", buildJsonObject {
+                    put("type", "integer")
+                    put(
+                        "description",
+                        "Max bytes to read. Defaults to the whole file (capped at " +
+                            "${MAX_READ_FILE_BYTES / 1024 / 1024}MB)."
+                    )
+                })
             },
             required = listOf("path"),
         )
     },
     needsApproval = { needsApproval("workspace_read_file") },
     execute = {
-        val path = it.jsonObject.absolutePath("path")
-        if (path.isImagePath()) {
-            workspaceRepository.readImageInRootfs(workspaceId, path)
-        } else {
-            val text = workspaceRepository.readTextInRootfs(workspaceId, path)
-            listOf(
-                UIMessagePart.Text(
-                    buildJsonObject {
-                        put("path", path)
-                        put("text", text)
-                    }.toString()
-                )
-            )
+        val params = it.jsonObject
+        val path = params.absolutePath("path")
+        when {
+            path.isImagePath() -> workspaceRepository.readImageInRootfs(workspaceId, path)
+
+            path.isDocumentPath() -> {
+                val text = workspaceRepository.readDocumentTextInRootfs(workspaceId, path)
+                listOf(UIMessagePart.Text(textPayload(path, text)))
+            }
+
+            else -> {
+                val offset = params.string("offset")?.toLongOrNull()?.coerceAtLeast(0L)
+                val limit = params.string("limit")?.toLongOrNull()?.coerceIn(1L, MAX_READ_FILE_BYTES)
+                if (offset != null || limit != null) {
+                    // 分段读取: 大文件不再受整文件大小限制
+                    val slice = workspaceRepository.readTextRangeInRootfs(
+                        workspaceId, path, offset ?: 0L, limit ?: MAX_READ_FILE_BYTES,
+                    )
+                    listOf(
+                        UIMessagePart.Text(
+                            buildJsonObject {
+                                put("path", path)
+                                put("text", slice.text)
+                                put("offset", slice.start)
+                                put("totalBytes", slice.totalBytes)
+                                if (slice.truncated) {
+                                    put("truncated", true)
+                                    put("nextOffset", slice.nextOffset)
+                                }
+                            }.toString()
+                        )
+                    )
+                } else {
+                    val text = workspaceRepository.readTextInRootfs(workspaceId, path)
+                    listOf(UIMessagePart.Text(textPayload(path, text)))
+                }
+            }
         }
     },
 )
@@ -104,9 +165,10 @@ private fun createWriteFileTool(
 ) = Tool(
     name = "workspace_write_file",
     description = """
-        Write a UTF-8 text file using the assistant's bound workspace Rootfs. Paths must be absolute inside Rootfs.
+        Write a file using the assistant's bound workspace Rootfs. Paths must be absolute inside Rootfs.
         Use /workspace for the workspace files area.
         Phone storage is mounted at /sdcard when granted.
+        Content is UTF-8 text by default; pass encoding="base64" to write binary data (e.g. images, archives, fonts).
     """.trimIndent().replace("\n", " "),
     parameters = {
         InputSchema.Obj(
@@ -120,17 +182,38 @@ private fun createWriteFileTool(
                     put("type", "boolean")
                     put("description", "Whether to overwrite an existing file. Defaults to true.")
                 })
+                put("encoding", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Content encoding: \"utf8\" (default) or \"base64\" for binary data.")
+                    put("enum", buildJsonArray {
+                        add("utf8")
+                        add("base64")
+                    })
+                })
             },
             required = listOf("path", "text"),
         )
     },
-    needsApproval = { needsApproval("workspace_write_file") || it.pathOutsideWritableRoots("path") },
+    // base64(二进制)写入始终需要审批
+    needsApproval = {
+        needsApproval("workspace_write_file") || it.pathOutsideWritableRoots("path") ||
+            it.jsonObject.string("encoding").equals("base64", ignoreCase = true)
+    },
     execute = {
         val params = it.jsonObject
         val path = params.absolutePath("path")
         val text = params.string("text") ?: error("text is required")
         val overwrite = params["overwrite"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
-        val entry = workspaceRepository.writeTextInRootfs(workspaceId, path, text, overwrite)
+        val encoding = params.string("encoding")?.trim()?.lowercase() ?: "utf8"
+        val entry = when (encoding) {
+            "utf8", "" -> workspaceRepository.writeTextInRootfs(workspaceId, path, text, overwrite)
+            "base64" -> {
+                val bytes = runCatching { android.util.Base64.decode(text.trim(), android.util.Base64.DEFAULT) }
+                    .getOrElse { error("text is not valid base64: ${it.message}") }
+                workspaceRepository.writeBytesInRootfs(workspaceId, path, bytes, overwrite)
+            }
+            else -> error("unsupported encoding: $encoding (use \"utf8\" or \"base64\")")
+        }
         listOf(UIMessagePart.Text(entry.toJson().toString()))
     },
 )
@@ -199,6 +282,134 @@ private fun createEditFileTool(
                 metadata = diff?.let { d -> DiffMetadata(diff = d).toMetadata() },
             )
         )
+    },
+)
+
+private fun createListFilesTool(
+    workspaceId: String,
+    needsApproval: (String) -> Boolean,
+    workspaceRepository: WorkspaceRepository,
+) = Tool(
+    name = "workspace_list_files",
+    description = """
+        List a directory inside the assistant's bound workspace Rootfs. Paths must be absolute inside Rootfs.
+        Use /workspace for the workspace files area. Phone storage is mounted at /sdcard when granted.
+        Returns each entry's path, type (file/directory), size and modified time.
+    """.trimIndent().replace("\n", " "),
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                putPathProperty(required = true)
+            },
+            required = listOf("path"),
+        )
+    },
+    needsApproval = { needsApproval("workspace_list_files") },
+    execute = {
+        val path = it.jsonObject.absolutePath("path")
+        val entries = workspaceRepository.listInRootfs(workspaceId, path)
+        val base = path.trimEnd('/')
+        listOf(
+            UIMessagePart.Text(
+                buildJsonObject {
+                    put("path", path)
+                    put("count", entries.size)
+                    put("entries", buildJsonArray {
+                        entries.forEach { entry ->
+                            add(buildJsonObject {
+                                put("path", if (base.isEmpty()) "/${entry.name}" else "$base/${entry.name}")
+                                put("type", if (entry.isDirectory) "directory" else "file")
+                                put("sizeBytes", entry.sizeBytes)
+                                put("updatedAt", entry.updatedAt)
+                            })
+                        }
+                    })
+                }.toString()
+            )
+        )
+    },
+)
+
+private fun createDeleteFileTool(
+    workspaceId: String,
+    needsApproval: (String) -> Boolean,
+    workspaceRepository: WorkspaceRepository,
+) = Tool(
+    name = "workspace_delete_file",
+    description = """
+        Delete a file or directory inside the assistant's bound workspace Rootfs. Paths must be absolute inside Rootfs.
+        Deleting a non-empty directory requires recursive=true. Deletion is permanent, there is no trash.
+    """.trimIndent().replace("\n", " "),
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                putPathProperty(required = true)
+                put("recursive", buildJsonObject {
+                    put("type", "boolean")
+                    put("description", "Required to delete a non-empty directory. Defaults to false.")
+                })
+            },
+            required = listOf("path"),
+        )
+    },
+    needsApproval = { needsApproval("workspace_delete_file") || it.pathOutsideWritableRoots("path") },
+    execute = {
+        val params = it.jsonObject
+        val path = params.absolutePath("path")
+        val recursive = params["recursive"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+        val deleted = workspaceRepository.deleteInRootfs(workspaceId, path, recursive)
+        listOf(
+            UIMessagePart.Text(
+                buildJsonObject {
+                    put("path", path)
+                    put("deleted", deleted)
+                }.toString()
+            )
+        )
+    },
+)
+
+private fun createMoveFileTool(
+    workspaceId: String,
+    needsApproval: (String) -> Boolean,
+    workspaceRepository: WorkspaceRepository,
+) = Tool(
+    name = "workspace_move_file",
+    description = """
+        Move or rename a file/directory inside the assistant's bound workspace Rootfs. Both paths must be absolute inside Rootfs.
+        Pass overwrite=true to replace an existing target. Moving a directory across mounts
+        (e.g. /sdcard -> /workspace) is not supported, use workspace_shell with mv instead.
+    """.trimIndent().replace("\n", " "),
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("source", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Absolute source path inside Rootfs")
+                })
+                put("target", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Absolute target path inside Rootfs")
+                })
+                put("overwrite", buildJsonObject {
+                    put("type", "boolean")
+                    put("description", "Overwrite an existing target. Defaults to false.")
+                })
+            },
+            required = listOf("source", "target"),
+        )
+    },
+    needsApproval = {
+        needsApproval("workspace_move_file") ||
+            it.pathOutsideWritableRoots("source") || it.pathOutsideWritableRoots("target")
+    },
+    execute = {
+        val params = it.jsonObject
+        val source = params.absolutePath("source")
+        val target = params.absolutePath("target")
+        val overwrite = params["overwrite"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+        val entry = workspaceRepository.moveInRootfs(workspaceId, source, target, overwrite)
+        listOf(UIMessagePart.Text(entry.toJson().toString()))
     },
 )
 
@@ -274,6 +485,45 @@ private fun createShellTool(
 
 private fun kotlinx.serialization.json.JsonObject.string(name: String): String? =
     this[name]?.jsonPrimitive?.contentOrNull
+
+private fun String.isDocumentPath(): Boolean =
+    substringAfterLast('.', "").lowercase() in DOCUMENT_EXTENSIONS
+
+/** read_file 的文本载荷(带字符数, 便于模型判断是否需要分段) */
+private fun textPayload(path: String, text: String): String =
+    buildJsonObject {
+        put("path", path)
+        put("text", text)
+        put("chars", text.length)
+    }.toString()
+
+/** 读取 PDF/DOCX/PPTX/EPUB: 先导出到缓存文件, 用文档解析器提取文本后删除临时文件 */
+private suspend fun WorkspaceRepository.readDocumentTextInRootfs(
+    workspaceId: String,
+    path: String,
+): String {
+    val context: Context = getKoin().get()
+    val extension = path.substringAfterLast('.', "").lowercase()
+    val temp = File.createTempFile("workspace-document-", ".$extension", context.cacheDir)
+    return try {
+        temp.outputStream().use { exportRootfsFile(workspaceId, path, it) }
+        val text = when (extension) {
+            "pdf" -> PdfParser.parserPdf(temp)
+            "docx" -> DocxParser.parse(temp)
+            "pptx" -> PptxParser.parse(temp)
+            "epub" -> EpubParser.parse(temp)
+            else -> error("Unsupported document type: $path")
+        }
+        if (text.length > MAX_DOCUMENT_CHARS) {
+            text.take(MAX_DOCUMENT_CHARS) +
+                "\n...(truncated, ${text.length - MAX_DOCUMENT_CHARS} more chars read via shell if needed)"
+        } else {
+            text
+        }
+    } finally {
+        temp.delete()
+    }
+}
 
 private suspend fun WorkspaceRepository.readTextInRootfs(
     workspaceId: String,
