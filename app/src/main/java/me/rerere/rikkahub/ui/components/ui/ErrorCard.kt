@@ -10,16 +10,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,7 +36,6 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Cancel01
@@ -47,6 +48,9 @@ import me.rerere.rikkahub.service.ChatErrorSolution
 import me.rerere.rikkahub.ui.context.LocalNavController
 import kotlin.uuid.Uuid
 
+/** 错误卡片列表的最大高度（超出后在列内滚动；错误卡片不再自动消失，需防止盖住输入栏） */
+private val MAX_ERROR_LIST_HEIGHT = 240.dp
+
 @Composable
 fun ErrorCardsDisplay(
     errors: List<ChatError>,
@@ -56,7 +60,11 @@ fun ErrorCardsDisplay(
 ) {
     AnimatedVisibility(
         visible = errors.isNotEmpty(),
-        modifier = modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        // 限高加在 AnimatedVisibility 自身的 modifier 上（它会传递给内部 Column），
+        // 若只给内层 Box 限高，外层仍会被内容顶高，导致边界失效。
+        modifier = modifier
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .heightIn(max = MAX_ERROR_LIST_HEIGHT),
         enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
         exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
     ) {
@@ -92,11 +100,19 @@ fun ErrorCardsDisplay(
             }
 
             // 错误卡片列表
-            errors.forEach { error ->
-                ErrorCard(
-                    error = error,
-                    onDismiss = { onDismissError(error.id) },
-                )
+            // 卡片不再自动消失，因此必须兜住"堆积"：整列限高（见上方 modifier）并在列内滚动，
+            // 避免大量错误淹没对话/输入栏（上游 #708 的顾虑）。最新的错误排在最上面。
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.End,
+            ) {
+                errors.asReversed().forEach { error ->
+                    ErrorCard(
+                        error = error,
+                        onDismiss = { onDismissError(error.id) },
+                    )
+                }
             }
         }
     }
@@ -114,11 +130,11 @@ fun ErrorCard(
     val checkFastModelSettings = stringResource(R.string.chat_page_check_fast_model_settings)
     val linkColor = MaterialTheme.colorScheme.primary
 
-    // 5 秒后自动消失
-    LaunchedEffect(error.id) {
-        delay(5000)
-        onDismiss()
-    }
+    // 错误卡片不自动消失，只在用户点击关闭按钮时移除。
+    // 原上游行为是 5 秒后自动消失（commit 2ec29af3, 关闭 issue #708），
+    // 但错误往往是用户唯一可读的诊断线索（键盘弹出/长堆栈时 5 秒根本读不完），
+    // 且无障碍最佳实践要求错误提示必须由用户确认后才能消失。
+    // 兜底：卡片超过 MAX_ERROR_LIST_HEIGHT 时列表内滚动，且卡片位置避开了输入栏。
 
     Surface(
         modifier = modifier.fillMaxWidth(),

@@ -184,8 +184,17 @@ class ChatService(
         solution: ChatErrorSolution? = null,
     ) {
         if (error is CancellationException) return
-        _errors.update {
-            it + ChatError(title = title, error = error, conversationId = conversationId, solution = solution)
+        _errors.update { list ->
+            // 错误卡片不再自动消失（见 ErrorCard），因此重复的同一错误只保留最新一条：
+            // 否则反复重试同一失败（弱网/Key 失效等）会堆出一整屏一模一样的卡片。
+            // 判定口径: 同一会话 + 同一标题 + 同一异常类型 + 同一 message。
+            val deduplicated = list.filterNot { existing ->
+                existing.conversationId == conversationId &&
+                    existing.title == title &&
+                    existing.error.javaClass == error.javaClass &&
+                    existing.error.message == error.message
+            }
+            deduplicated + ChatError(title = title, error = error, conversationId = conversationId, solution = solution)
         }
     }
 

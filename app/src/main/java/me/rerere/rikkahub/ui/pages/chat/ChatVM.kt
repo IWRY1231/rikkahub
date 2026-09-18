@@ -121,11 +121,28 @@ class ChatVM(
     }.stateIn(viewModelScope, SharingStarted.Lazily, null)
 
     // 错误状态
+    // 错误卡片不再自动消失（见 ErrorCard 注释），因此必须按会话过滤：
+    // ChatService.errors 是全局列表，不过滤的话切换会话后会一直看到别的会话残留的错误。
+    // conversationId == null 的错误视为全局错误（与任何会话都相关），照常显示。
     val errors: StateFlow<List<ChatError>> = chatService.errors
+        .map { list ->
+            list.filter { it.conversationId == null || it.conversationId == _conversationId }
+        }
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     fun dismissError(id: Uuid) = chatService.dismissError(id)
 
-    fun clearAllErrors() = chatService.clearAllErrors()
+    /**
+     * 清除当前会话可见的错误。
+     *
+     * ChatService.errors 是全局列表，而这里只显示本会话（+ 无会话归属的全局）错误，
+     * 所以不能直接 clearAllErrors()——那会把其他会话未读的错误一起清掉。
+     */
+    fun clearAllErrors() {
+        chatService.errors.value
+            .filter { it.conversationId == null || it.conversationId == _conversationId }
+            .forEach { chatService.dismissError(it.id) }
+    }
 
     val messageQueue = chatService.getMessageQueueFlow(_conversationId)
 
