@@ -625,9 +625,15 @@ private fun MarkdownNode(
         MarkdownElementTypes.CODE_SPAN -> {
             val code = node.getTextInNode(content).trim('`')
             val (before, url, tail) = splitGfmAutolinkText(code)
+            // 上游 a7850967 关闭代码块连字（calt/liga/clig），fork 的吞字守卫需同步带上
+            val codeTextStyle = LocalTextStyle.current
+                .copy(fontFeatureSettings = "'calt' 0, 'liga' 0, 'clig' 0")
             if (tail.isEmpty()) {
                 Text(
-                    text = code, fontFamily = JetbrainsMono, modifier = modifier
+                    text = code,
+                    fontFamily = JetbrainsMono,
+                    style = codeTextStyle,
+                    modifier = modifier
                 )
             } else {
                 // 吞字守卫(同 inline 版): URL 部分可点, 尾部按普通文本输出
@@ -640,6 +646,7 @@ private fun MarkdownNode(
                         append(tail)
                     },
                     fontFamily = JetbrainsMono,
+                    style = codeTextStyle,
                     modifier = modifier,
                 )
             }
@@ -1239,8 +1246,10 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
         node.type == MarkdownElementTypes.CODE_SPAN -> {
             val code = node.getTextInNode(content).trim('`')
             val (before, url, tail) = splitGfmAutolinkText(code)
+            // 上游 a7850967 关闭代码块连字；fork 守护卫分支同样保留该设置，避免两处样式漂移
             val codeStyle = SpanStyle(
-                fontFamily = JetbrainsMono,
+                fontFamily = JetBrainsMono,
+                fontFeatureSettings = "'calt' 0, 'liga' 0, 'clig' 0",
                 fontSize = 0.9.em,
                 color = colorScheme.primary,
             )
