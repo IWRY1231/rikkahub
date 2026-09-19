@@ -1248,7 +1248,7 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
             val (before, url, tail) = splitGfmAutolinkText(code)
             // 上游 a7850967 关闭代码块连字；fork 守护卫分支同样保留该设置，避免两处样式漂移
             val codeStyle = SpanStyle(
-                fontFamily = JetBrainsMono,
+                fontFamily = JetbrainsMono,
                 fontFeatureSettings = "'calt' 0, 'liga' 0, 'clig' 0",
                 fontSize = 0.9.em,
                 color = colorScheme.primary,
