@@ -785,7 +785,11 @@ private fun ModelItem(
                     )
                 }
                 Column(
-                    modifier = Modifier.weight(1f, fill = false),
+                    // weight(1f) 而非 weight(1f, fill = false)：占满图标与 tail 之间的剩余宽度，
+                    // 使 tail（收藏按钮 + 测试按钮）在每一行都停在同一个 x 位置 —— 即用户要的
+                    // "收藏/响应分别对齐成两条竖线"（features §14）。标签已被 compact 压缩到
+                    // 360dp 屏也能单排放下（普通区 200dp / 收藏区 176dp ≥ 需 166dp）。
+                    modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     Text(
