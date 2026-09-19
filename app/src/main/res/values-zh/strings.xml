@@ -1401,4 +1401,13 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="setting_display_page_background_effect_type">背景效果类型</string>
   <string name="setting_display_page_background_effect_blur">模糊</string>
   <string name="setting_display_page_background_effect_glass">玻璃</string>
+  <string name="model_list_test_response">测试响应</string>
+  <string name="model_list_test_running">测试中…</string>
+  <string name="model_list_test_result_ok">正常 · 首字 %1$d ms</string>
+  <string name="model_list_test_result_speed">%1$s tok/s</string>
+  <string name="model_list_test_result_empty">连接成功但未返回文本（可能被内容过滤或额度不足）</string>
+  <string name="model_list_test_result_fail">%1$s: %2$s</string>
+  <string name="model_list_test_dismiss">关闭测试结果</string>
+  <string name="model_list_test_failed_title">请求失败</string>
+  <string name="model_list_test_ok_title">已收到响应</string>
 </resources>

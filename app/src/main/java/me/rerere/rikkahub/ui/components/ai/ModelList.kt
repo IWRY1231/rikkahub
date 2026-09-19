@@ -345,6 +345,9 @@ private fun ColumnScope.ModelList(
     val settings = settingsStore.settingsFlow
         .collectAsStateWithLifecycle()
 
+    // 模型响应测试（收藏区与普通列表共用同一份状态, 避免同模型重复请求）
+    val modelTester = rememberModelResponseTester()
+
     val favoriteModels = settings.value.favoriteModels.mapNotNull { modelId ->
         val model = settings.value.providers.findModelById(modelId) ?: return@mapNotNull null
         if (model.type != modelType) return@mapNotNull null
@@ -527,52 +530,65 @@ private fun ColumnScope.ModelList(
                     state = reorderableState,
                     key = "favorite:" + model.id.toString()
                 ) { isDragging ->
-                    ModelItem(
-                        model = model,
-                        onSelect = onSelect,
+                    Column(
                         modifier = Modifier
                             .scale(if (isDragging) 0.95f else 1f)
                             .animateItem(),
-                        providerSetting = provider,
-                        select = model.id == currentModel,
-                        onDismiss = {
-                            onDismiss()
-                        },
-                        tail = {
-                            IconButton(
-                                onClick = {
-                                    coroutineScope.launch {
-                                        settingsStore.update { settings ->
-                                            settings.copy(
-                                                favoriteModels = settings.favoriteModels.filter { it != model.id }
-                                            )
+                    ) {
+                        ModelItem(
+                            model = model,
+                            onSelect = onSelect,
+                            providerSetting = provider,
+                            select = model.id == currentModel,
+                            onDismiss = {
+                                onDismiss()
+                            },
+                            tail = {
+                                IconButton(
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            settingsStore.update { settings ->
+                                                settings.copy(
+                                                    favoriteModels = settings.favoriteModels.filter { it != model.id }
+                                                )
+                                            }
                                         }
                                     }
+                                ) {
+                                    Icon(
+                                        HeartIcon,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
                                 }
-                            ) {
+                                ModelTestButton(
+                                    model = model,
+                                    providerSetting = provider,
+                                    tester = modelTester,
+                                )
+                            },
+                            dragHandle = {
                                 Icon(
-                                    HeartIcon,
+                                    imageVector = HugeIcons.DragDropHorizontal,
                                     contentDescription = null,
-                                    modifier = Modifier.size(20.dp),
-                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.longPressDraggableHandle(
+                                        onDragStarted = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+                                        },
+                                        onDragStopped = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.GestureEnd)
+                                        }
+                                    )
                                 )
                             }
-                        },
-                        dragHandle = {
-                            Icon(
-                                imageVector = HugeIcons.DragDropHorizontal,
-                                contentDescription = null,
-                                modifier = Modifier.longPressDraggableHandle(
-                                    onDragStarted = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
-                                    },
-                                    onDragStopped = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.GestureEnd)
-                                    }
-                                )
-                            )
-                        }
-                    )
+                        )
+                        ModelTestResultRow(
+                            model = model,
+                            tester = modelTester,
+                            modifier = Modifier.padding(bottom = 4.dp),
+                        )
+                    }
                 }
             }
         }
@@ -606,51 +622,62 @@ private fun ColumnScope.ModelList(
                 key = { it.id }
             ) { model ->
                 val favorite = settings.value.favoriteModels.contains(model.id)
-                ModelItem(
-                    model = model,
-                    onSelect = onSelect,
-                    modifier = Modifier.animateItem(),
-                    providerSetting = providerSetting,
-                    select = currentModel == model.id,
-                    onDismiss = {
-                        onDismiss()
-                    },
-                    tail = {
-                        IconButton(
-                            onClick = {
-                                coroutineScope.launch {
-                                    settingsStore.update { settings ->
-                                        if (favorite) {
-                                            settings.copy(
-                                                favoriteModels = settings.favoriteModels.filter { it != model.id }
-                                            )
+                Column(modifier = Modifier.animateItem()) {
+                    ModelItem(
+                        model = model,
+                        onSelect = onSelect,
+                        providerSetting = providerSetting,
+                        select = currentModel == model.id,
+                        onDismiss = {
+                            onDismiss()
+                        },
+                        tail = {
+                            IconButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        settingsStore.update { settings ->
+                                            if (favorite) {
+                                                settings.copy(
+                                                    favoriteModels = settings.favoriteModels.filter { it != model.id }
+                                                )
 
-                                        } else {
-                                            settings.copy(
-                                                favoriteModels = settings.favoriteModels + model.id
-                                            )
+                                            } else {
+                                                settings.copy(
+                                                    favoriteModels = settings.favoriteModels + model.id
+                                                )
+                                            }
                                         }
                                     }
                                 }
+                            ) {
+                                if (favorite) {
+                                    Icon(
+                                        HeartIcon,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = HugeIcons.Favourite,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
-                        ) {
-                            if (favorite) {
-                                Icon(
-                                    HeartIcon,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp),
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = HugeIcons.Favourite,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
+                            ModelTestButton(
+                                model = model,
+                                providerSetting = providerSetting,
+                                tester = modelTester,
+                            )
                         }
-                    }
-                )
+                    )
+                    ModelTestResultRow(
+                        model = model,
+                        tester = modelTester,
+                        modifier = Modifier.padding(bottom = 4.dp),
+                    )
+                }
             }
         }
     }
