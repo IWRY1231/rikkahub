@@ -583,11 +583,6 @@ private fun ColumnScope.ModelList(
                                 )
                             }
                         )
-                        ModelTestResultRow(
-                            model = model,
-                            tester = modelTester,
-                            modifier = Modifier.padding(bottom = 4.dp),
-                        )
                     }
                 }
             }
@@ -622,62 +617,56 @@ private fun ColumnScope.ModelList(
                 key = { it.id }
             ) { model ->
                 val favorite = settings.value.favoriteModels.contains(model.id)
-                Column(modifier = Modifier.animateItem()) {
-                    ModelItem(
-                        model = model,
-                        onSelect = onSelect,
-                        providerSetting = providerSetting,
-                        select = currentModel == model.id,
-                        onDismiss = {
-                            onDismiss()
-                        },
-                        tail = {
-                            IconButton(
-                                onClick = {
-                                    coroutineScope.launch {
-                                        settingsStore.update { settings ->
-                                            if (favorite) {
-                                                settings.copy(
-                                                    favoriteModels = settings.favoriteModels.filter { it != model.id }
-                                                )
+                ModelItem(
+                    model = model,
+                    onSelect = onSelect,
+                    modifier = Modifier.animateItem(),
+                    providerSetting = providerSetting,
+                    select = currentModel == model.id,
+                    onDismiss = {
+                        onDismiss()
+                    },
+                    tail = {
+                        IconButton(
+                            onClick = {
+                                coroutineScope.launch {
+                                    settingsStore.update { settings ->
+                                        if (favorite) {
+                                            settings.copy(
+                                                favoriteModels = settings.favoriteModels.filter { it != model.id }
+                                            )
 
-                                            } else {
-                                                settings.copy(
-                                                    favoriteModels = settings.favoriteModels + model.id
-                                                )
-                                            }
+                                        } else {
+                                            settings.copy(
+                                                favoriteModels = settings.favoriteModels + model.id
+                                            )
                                         }
                                     }
                                 }
-                            ) {
-                                if (favorite) {
-                                    Icon(
-                                        HeartIcon,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp),
-                                        tint = MaterialTheme.colorScheme.primary,
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = HugeIcons.Favourite,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
                             }
-                            ModelTestButton(
-                                model = model,
-                                providerSetting = providerSetting,
-                                tester = modelTester,
-                            )
+                        ) {
+                            if (favorite) {
+                                Icon(
+                                    HeartIcon,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = HugeIcons.Favourite,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
-                    )
-                    ModelTestResultRow(
-                        model = model,
-                        tester = modelTester,
-                        modifier = Modifier.padding(bottom = 4.dp),
-                    )
-                }
+                        ModelTestButton(
+                            model = model,
+                            providerSetting = providerSetting,
+                            tester = modelTester,
+                        )
+                    }
+                )
             }
         }
     }

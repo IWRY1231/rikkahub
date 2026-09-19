@@ -1,30 +1,25 @@
 package me.rerere.rikkahub.ui.components.ai
 
-import android.widget.Toast
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.dokar.sonner.ToastType
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ProviderManager
 import me.rerere.ai.provider.ProviderSetting
@@ -32,13 +27,10 @@ import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.ui.StreamChunk
 import me.rerere.ai.ui.UIMessage
 import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.Cancel01
-import me.rerere.hugeicons.stroke.CheckmarkCircle02
 import me.rerere.hugeicons.stroke.Connect
 import me.rerere.rikkahub.R
-import me.rerere.rikkahub.ui.theme.extendColors
+import me.rerere.rikkahub.ui.context.LocalToaster
 import org.koin.compose.koinInject
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.uuid.Uuid
 
 /**
@@ -48,7 +40,8 @@ import kotlin.uuid.Uuid
  * - 只做**流式**一路：真实聊天走的就是流式，能同时覆盖鉴权/网络/模型可用性/流式解析；
  * - 额外测 **TTFT（首字延迟）**：用户体感最直接的指标；
  * - 提示词要求"一句话"，并用 [TEST_MAX_TOKENS] 限制输出，避免浪费额度；
- * - 不使用工具/推理参数，保持与"裸聊"一致的最小面。
+ * - 思考强度默认 [ReasoningLevel.AUTO]（与真实聊天的 assistant 默认值一致）：对支持思考的模型
+ *   才会下发思考参数，因此不影响普通模型；对"必须带思考参数否则 400"的模型能避免报错。
  */
 private const val TEST_MAX_TOKENS = 64
 private const val TEST_SYSTEM_PROMPT = "You are a helpful assistant."
@@ -84,109 +77,109 @@ internal const val EMPTY_RESPONSE_TYPE = "EmptyResponse"
 /**
  * 模型响应测试状态持有者。
  *
- * 状态按 modelId 存放，因此：
- * - 同一模型在"收藏区"和"普通列表"两条入口共享同一份结果（避免重复请求）；
- * - 每个模型的测试互相独立，可并发；
- * - sheet 关闭后状态随 remember 释放（不长期驻留）。
+ * 状态按 modelId 存放，因此同一模型在"收藏区"和"普通列表"两条入口共享同一份运行状态
+ * （避免同模型被并发测试）；sheet 关闭后状态随 remember 释放。
  */
 class ModelResponseTester internal constructor(
     private val providerManager: ProviderManager,
-    private val scope: CoroutineScope,
 ) {
     private val results = mutableStateMapOf<Uuid, ModelTestResult>()
-    // 并发安全：多个模型的测试可同时进行，且 finally 块在各自协程中执行
-    private val jobs = ConcurrentHashMap<Uuid, Job>()
 
-    fun resultOf(modelId: Uuid): ModelTestResult? = results[modelId]
+    /** 是否正在测试（按钮据此显示进度圈并禁用点击） */
+    fun isRunning(modelId: Uuid): Boolean = results[modelId] is ModelTestResult.Running
 
-    /** 启动一次测试；已在运行中的模型会被忽略（防连点） */
-    internal fun test(
+    /**
+     * 执行一次测试并返回结果（结果由调用方决定如何呈现）。
+     *
+     * 是 suspend 函数：调用方在自己的协程里 await，sheet 关闭导致作用域取消时，
+     * 请求会随之取消（不会留下悬挂状态）。
+     */
+    internal suspend fun test(
         model: Model,
         providerSetting: ProviderSetting,
-    ) {
+        /** 思考强度；见类注释 */
+        reasoningLevel: ReasoningLevel = ReasoningLevel.AUTO,
+    ): ModelTestResult {
         val modelId = model.id
-        if (jobs[modelId]?.isActive == true) return
-
         results[modelId] = ModelTestResult.Running
         val startedAt = System.currentTimeMillis()
-        jobs[modelId] = scope.launch {
-            try {
-                val provider = providerManager.getProviderByType(providerSetting)
-                var firstTokenAt: Long? = null
-                var text = StringBuilder()
-                var usageTokens = 0
-
-                provider.streamText(
-                    providerSetting = providerSetting,
-                    messages = listOf(
-                        UIMessage.system(TEST_SYSTEM_PROMPT),
-                        UIMessage.user(TEST_USER_PROMPT),
-                    ),
-                    params = TextGenerationParams(
-                        model = model,
-                        maxTokens = TEST_MAX_TOKENS,
-                        customHeaders = model.customHeaders,
-                        customBody = model.customBodies,
-                    ),
-                ).collect { chunk ->
-                    when (chunk) {
-                        is StreamChunk.TextDelta -> {
-                            if (firstTokenAt == null) firstTokenAt = System.currentTimeMillis()
-                            text.append(chunk.text)
-                        }
-
-                        is StreamChunk.Usage -> {
-                            usageTokens = chunk.usage.completionTokens
-                        }
-
-                        else -> Unit
-                    }
-                }
-
-                val totalMs = System.currentTimeMillis() - startedAt
-                val sample = text.toString().trim()
-                if (firstTokenAt == null && sample.isEmpty()) {
-                    // 流正常结束但没有任何文本：连接没问题，但模型没产出内容。
-                    // 文案交给 UI 层本地化（这里只标记类型）
-                    results[modelId] = ModelTestResult.Failure(
-                        type = EMPTY_RESPONSE_TYPE,
-                        message = "",
-                    )
-                    return@launch
-                }
-                val estimatedTokens = if (usageTokens > 0) {
-                    usageTokens
-                } else {
-                    // 粗略估算：4 字符 ≈ 1 token（中英混排下的常用近似）
-                    (sample.length / 4).coerceAtLeast(1)
-                }
-                val elapsedForRate = (totalMs - (firstTokenAt ?: startedAt)).coerceAtLeast(1L)
-                results[modelId] = ModelTestResult.Success(
-                    firstTokenMs = (firstTokenAt ?: startedAt) - startedAt,
-                    totalMs = totalMs,
-                    completionTokens = estimatedTokens,
-                    tokensPerSecond = if (estimatedTokens >= 2 && elapsedForRate >= 50) {
-                        estimatedTokens.toDouble() / (elapsedForRate / 1000.0)
-                    } else {
-                        null
-                    },
-                    sample = sample,
-                )
-            } catch (error: Throwable) {
-                if (error is CancellationException) throw error
-                results[modelId] = ModelTestResult.Failure(
-                    type = error.javaClass.simpleName,
-                    message = error.message ?: error.toString(),
-                )
-            } finally {
-                jobs.remove(modelId)
-            }
+        return try {
+            runTest(model, providerSetting, reasoningLevel, startedAt)
+        } finally {
+            results.remove(modelId)
         }
     }
 
-    internal fun dismiss(modelId: Uuid) {
-        jobs.remove(modelId)?.cancel()
-        results.remove(modelId)
+    private suspend fun runTest(
+        model: Model,
+        providerSetting: ProviderSetting,
+        reasoningLevel: ReasoningLevel,
+        startedAt: Long,
+    ): ModelTestResult = try {
+        val provider = providerManager.getProviderByType(providerSetting)
+        var firstTokenAt: Long? = null
+        val text = StringBuilder()
+        var usageTokens = 0
+
+        provider.streamText(
+            providerSetting = providerSetting,
+            messages = listOf(
+                UIMessage.system(TEST_SYSTEM_PROMPT),
+                UIMessage.user(TEST_USER_PROMPT),
+            ),
+            params = TextGenerationParams(
+                model = model,
+                maxTokens = TEST_MAX_TOKENS,
+                reasoningLevel = reasoningLevel,
+                customHeaders = model.customHeaders,
+                customBody = model.customBodies,
+            ),
+        ).collect { chunk ->
+            when (chunk) {
+                is StreamChunk.TextDelta -> {
+                    if (firstTokenAt == null) firstTokenAt = System.currentTimeMillis()
+                    text.append(chunk.text)
+                }
+
+                is StreamChunk.Usage -> usageTokens = chunk.usage.completionTokens
+
+                else -> Unit
+            }
+        }
+
+        val totalMs = System.currentTimeMillis() - startedAt
+        val sample = text.toString().trim()
+        if (firstTokenAt == null && sample.isEmpty()) {
+            // 流正常结束但没有任何文本：连接没问题，但模型没产出内容。
+            // 文案交给 UI 层本地化（这里只标记类型）
+            ModelTestResult.Failure(type = EMPTY_RESPONSE_TYPE, message = "")
+        } else {
+            val estimatedTokens = if (usageTokens > 0) {
+                usageTokens
+            } else {
+                // 粗略估算：4 字符 ≈ 1 token（中英混排下的常用近似）
+                (sample.length / 4).coerceAtLeast(1)
+            }
+            val firstTokenMs = (firstTokenAt ?: startedAt) - startedAt
+            val elapsedForRate = (totalMs - firstTokenMs).coerceAtLeast(1L)
+            ModelTestResult.Success(
+                firstTokenMs = firstTokenMs,
+                totalMs = totalMs,
+                completionTokens = estimatedTokens,
+                tokensPerSecond = if (estimatedTokens >= 2 && elapsedForRate >= 50) {
+                    estimatedTokens.toDouble() / (elapsedForRate / 1000.0)
+                } else {
+                    null
+                },
+                sample = sample,
+            )
+        }
+    } catch (error: Throwable) {
+        if (error is CancellationException) throw error
+        ModelTestResult.Failure(
+            type = error.javaClass.simpleName,
+            message = error.message ?: error.toString(),
+        )
     }
 }
 
@@ -198,15 +191,18 @@ class ModelResponseTester internal constructor(
 @Composable
 fun rememberModelResponseTester(): ModelResponseTester {
     val providerManager = koinInject<ProviderManager>()
-    val scope = rememberCoroutineScope()
-    return remember(providerManager, scope) { ModelResponseTester(providerManager, scope) }
+    return remember(providerManager) { ModelResponseTester(providerManager) }
 }
 
 /**
- * 模型项右侧的「测试响应」按钮（放在收藏按钮右边）。
+ * 模型项右侧的「测试响应」按钮（紧邻收藏按钮右侧）。
  *
- * 紧凑样式：用 40dp 触控目标 + 18dp 图标，与相邻收藏按钮的视觉节奏一致；
- * 运行中显示进度指示器并禁用点击（防连点浪费额度）。
+ * 排版说明：用 [clickable] 的 32dp Box 而非 IconButton —— m3 1.5.0-alpha 起 IconButton 强制
+ * 48dp 最小触控目标且不再响应 `LocalMinimumInteractiveComponentEnforcement`（pitfalls #24），
+ * 两个 IconButton 并排会把 tail 撑到 96dp+，使收藏按钮被迫大幅左移。
+ *
+ * 交互：点击后按钮转为进度圈并禁用（防连点浪费额度）；**结果通过 toast 上报**，不占列表空间；
+ * 测试中不弹 toast。与收藏按钮之间沿用 tail 所在 Row 的 12dp 间距（用户要求"紧凑点也没关系"）。
  */
 @Composable
 fun ModelTestButton(
@@ -215,24 +211,35 @@ fun ModelTestButton(
     tester: ModelResponseTester,
     modifier: Modifier = Modifier,
 ) {
-    val running = tester.resultOf(model.id) is ModelTestResult.Running
+    val running = tester.isRunning(model.id)
+    val toaster = LocalToaster.current
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
-    IconButton(
-        onClick = {
-            tester.test(model, providerSetting)
-            Toast.makeText(
-                context,
-                context.getString(R.string.model_list_test_running),
-                Toast.LENGTH_SHORT,
-            ).show()
-        },
-        enabled = !running,
-        modifier = modifier.size(40.dp),
+    Box(
+        modifier = modifier
+            // 32dp 视觉尺寸 + clickable（无 IconButton 的 48dp 强制触控目标），
+            // 配合收藏按钮即可在 tail 内留出空间而不挤压模型名区域
+            .size(32.dp)
+            .clip(CircleShape)
+            .clickable(enabled = !running) {
+                scope.launch {
+                    val result = tester.test(model, providerSetting)
+                    toaster.show(
+                        message = result.toToastMessage(context),
+                        type = if (result is ModelTestResult.Success) {
+                            ToastType.Success
+                        } else {
+                            ToastType.Error
+                        },
+                    )
+                }
+            },
+        contentAlignment = Alignment.Center,
     ) {
         if (running) {
             CircularProgressIndicator(
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(16.dp),
                 strokeWidth = 2.dp,
             )
         } else {
@@ -245,116 +252,27 @@ fun ModelTestButton(
     }
 }
 
-/**
- * 测试结果行（就地展开在模型项下方）。
- *
- * 成功：绿色 · 首字延迟 · 吞吐 · 回复片段（片段可确认"模型真的回了话"）
- * 失败：红色 · 异常类型 + 消息；点右侧叉号清除结果
- */
-@Composable
-fun ModelTestResultRow(
-    model: Model,
-    tester: ModelResponseTester,
-    modifier: Modifier = Modifier,
-) {
-    val result = tester.resultOf(model.id) ?: return
-    val context = LocalContext.current
-    val sample = (result as? ModelTestResult.Success)?.sample?.replace("\n", " ")
+/** 把测试结果转成一行 toast 文案（成功：首字延迟 [+ 吞吐]；失败：类型 + 原因） */
+private fun ModelTestResult.toToastMessage(context: android.content.Context): String = when (this) {
+    // 不会走到（结果只在测试结束后上报），保留分支以满足穷尽性
+    is ModelTestResult.Running -> context.getString(R.string.model_list_test_running)
 
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(start = 4.dp, end = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        when (result) {
-            is ModelTestResult.Running -> {
-                CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp)
-                Text(
-                    text = stringResource(R.string.model_list_test_running),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    is ModelTestResult.Success -> buildString {
+        append(context.getString(R.string.model_list_test_result_ok, firstTokenMs))
+        tokensPerSecond?.let { rate ->
+            append(" · ")
+            append(
+                context.getString(
+                    R.string.model_list_test_result_speed,
+                    String.format("%.1f", rate),
                 )
-            }
-
-            is ModelTestResult.Success -> {
-                Icon(
-                    imageVector = HugeIcons.CheckmarkCircle02,
-                    contentDescription = stringResource(R.string.model_list_test_ok_title),
-                    modifier = Modifier.size(14.dp),
-                    tint = MaterialTheme.extendColors.green6,
-                )
-                Text(
-                    text = buildString {
-                        append(
-                            context.getString(
-                                R.string.model_list_test_result_ok,
-                                result.firstTokenMs,
-                            )
-                        )
-                        result.tokensPerSecond?.let { rate ->
-                            append(" · ")
-                            append(
-                                context.getString(
-                                    R.string.model_list_test_result_speed,
-                                    String.format("%.1f", rate),
-                                )
-                            )
-                        }
-                        sample?.takeIf { it.isNotBlank() }?.let { text ->
-                            append(" · ")
-                            append(text.take(40))
-                        }
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.extendColors.green6,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-
-            is ModelTestResult.Failure -> {
-                Icon(
-                    imageVector = HugeIcons.Cancel01,
-                    contentDescription = stringResource(R.string.model_list_test_failed_title),
-                    modifier = Modifier.size(14.dp),
-                    tint = MaterialTheme.extendColors.red6,
-                )
-                Text(
-                    text = if (result.type == EMPTY_RESPONSE_TYPE) {
-                        context.getString(R.string.model_list_test_result_empty)
-                    } else {
-                        context.getString(
-                            R.string.model_list_test_result_fail,
-                            result.type,
-                            result.message.take(120),
-                        )
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.extendColors.red6,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-
-        // 清除结果（成功/失败都允许），避免结果长期占位
-        if (result !is ModelTestResult.Running) {
-            IconButton(
-                onClick = { tester.dismiss(model.id) },
-                modifier = Modifier.size(24.dp),
-            ) {
-                Icon(
-                    imageVector = HugeIcons.Cancel01,
-                    contentDescription = stringResource(R.string.model_list_test_dismiss),
-                    modifier = Modifier.size(12.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            )
         }
     }
-}
 
+    is ModelTestResult.Failure -> if (type == EMPTY_RESPONSE_TYPE) {
+        context.getString(R.string.model_list_test_result_empty)
+    } else {
+        context.getString(R.string.model_list_test_result_fail, type, message.take(160))
+    }
+}
