@@ -95,6 +95,15 @@ import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import kotlin.uuid.Uuid
 
+/**
+ * 模型列表第二排标签的横向内边距。
+ *
+ * 比 [me.rerere.rikkahub.ui.components.ui.Tag] 默认的 6dp 更紧凑，目的是让
+ * "type / modality / 工具 / 思考" 四个标签在**同一排**放得下（见 features §14）。
+ * 设置页仍用默认值（调用时未传 compact），因此不受影响。
+ */
+private val TagCompactPadding = 2.dp
+
 class ModelListState internal constructor(
     modelId: Uuid?,
     providers: List<ProviderSetting>,
@@ -546,7 +555,7 @@ private fun ColumnScope.ModelList(
                                 // 使收藏与测试按钮紧邻
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(0.dp),
                                 ) {
                                     FavoriteIconButton(
                                         favorite = true,
@@ -571,14 +580,18 @@ private fun ColumnScope.ModelList(
                                 Icon(
                                     imageVector = HugeIcons.DragDropHorizontal,
                                     contentDescription = null,
-                                    modifier = Modifier.longPressDraggableHandle(
-                                        onDragStarted = {
-                                            haptic.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
-                                        },
-                                        onDragStopped = {
-                                            haptic.performHapticFeedback(HapticFeedbackType.GestureEnd)
-                                        }
-                                    )
+                                    // 18dp: 原为图标默认尺寸(~24dp), 收紧以给第二排四个标签让出宽度
+                                    // (用户要求"四个图标能在一排放下 + 图标尽可能靠右", features §14)
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .longPressDraggableHandle(
+                                            onDragStarted = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+                                            },
+                                            onDragStopped = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.GestureEnd)
+                                            }
+                                        )
                                 )
                             }
                         )
@@ -628,7 +641,7 @@ private fun ColumnScope.ModelList(
                     tail = {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(0.dp),
                         ) {
                             FavoriteIconButton(
                                 favorite = favorite,
@@ -756,7 +769,8 @@ private fun ModelItem(
                         indication = LocalIndication.current
                     ),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                // 6dp: 图标↔文字列↔tail 三者的间距（原 12dp, 用户要求图标尽可能靠右, features §14）
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Surface(
                     color = MaterialTheme.colorScheme.secondaryContainer,
@@ -764,13 +778,14 @@ private fun ModelItem(
                 ) {
                     AutoAIIcon(
                         name = model.modelId,
+                        // 34dp(32+2): 原 4dp padding → 2dp, 让第二排标签多出 4dp 宽度
                         modifier = Modifier
-                            .padding(4.dp)
+                            .padding(2.dp)
                             .size(32.dp)
                     )
                 }
                 Column(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f, fill = false),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     Text(
@@ -780,17 +795,18 @@ private fun ModelItem(
                         overflow = TextOverflow.Ellipsis,
                     )
 
+                    // 第二排标签：不设 fillMaxWidth（否则 FlowRow 独占整行宽度, 会把 tail 推到更右侧
+                    // 而标签区被压缩换行）；改为wrapContent, 让"图标+文字列+tail"按内容分配宽度,
+                    // 剩余空隙留在 tail 右侧 —— 即"图标尽可能靠右"(features §14)
                     FlowRow(
-                        modifier = Modifier
-                            .fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        ModelTypeTag(model = model)
+                        ModelTypeTag(model = model, compact = true)
 
-                        ModelModalityTag(model = model)
+                        ModelModalityTag(model = model, compact = true)
 
-                        ModelAbilityTag(model = model)
+                        ModelAbilityTag(model = model, compact = true)
                     }
                 }
                 tail()
@@ -801,9 +817,10 @@ private fun ModelItem(
 }
 
 @Composable
-fun ModelTypeTag(model: Model) {
+fun ModelTypeTag(model: Model, compact: Boolean = false) {
     Tag(
-        type = TagType.INFO
+        type = TagType.INFO,
+        contentPadding = if (compact) TagCompactPadding else 6.dp,
     ) {
         Text(
             text = stringResource(
@@ -818,9 +835,10 @@ fun ModelTypeTag(model: Model) {
 }
 
 @Composable
-fun ModelModalityTag(model: Model) {
+fun ModelModalityTag(model: Model, compact: Boolean = false) {
     Tag(
-        type = TagType.SUCCESS
+        type = TagType.SUCCESS,
+        contentPadding = if (compact) TagCompactPadding else 6.dp,
     ) {
         model.inputModalities.fastForEach { modality ->
             Icon(
@@ -855,12 +873,13 @@ fun ModelModalityTag(model: Model) {
 }
 
 @Composable
-fun ModelAbilityTag(model: Model) {
+fun ModelAbilityTag(model: Model, compact: Boolean = false) {
     model.abilities.fastForEach { ability ->
         when (ability) {
             ModelAbility.TOOL -> {
                 Tag(
-                    type = TagType.WARNING
+                    type = TagType.WARNING,
+                    contentPadding = if (compact) TagCompactPadding else 6.dp,
                 ) {
                     Icon(
                         imageVector = HugeIcons.Tools,
@@ -872,7 +891,8 @@ fun ModelAbilityTag(model: Model) {
 
             ModelAbility.REASONING -> {
                 Tag(
-                    type = TagType.INFO
+                    type = TagType.INFO,
+                    contentPadding = if (compact) TagCompactPadding else 6.dp,
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.deepthink),

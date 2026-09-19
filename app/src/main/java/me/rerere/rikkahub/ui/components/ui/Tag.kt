@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import me.rerere.rikkahub.ui.theme.extendColors
 
@@ -32,6 +33,8 @@ fun Tag(
     modifier: Modifier = Modifier,
     type: TagType = TagType.DEFAULT,
     onClick: (() -> Unit)? = null,
+    /** 横向内边距；模型列表用更紧凑的值（见 ModelList 的 TagCompactPadding），默认保持原样 */
+    contentPadding: Dp = 6.dp,
     children: @Composable RowScope.() -> Unit
 ) {
     val background = when (type) {
@@ -60,7 +63,7 @@ fun Tag(
                         it
                     }
                 }
-                .padding(horizontal = 6.dp, vertical = 1.dp),
+                .padding(horizontal = contentPadding, vertical = 1.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             children()
