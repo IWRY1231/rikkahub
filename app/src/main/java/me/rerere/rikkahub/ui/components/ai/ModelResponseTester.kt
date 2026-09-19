@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
@@ -28,7 +29,9 @@ import me.rerere.ai.ui.StreamChunk
 import me.rerere.ai.ui.UIMessage
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Connect
+import me.rerere.hugeicons.stroke.Favourite
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.ui.components.ui.icons.HeartIcon
 import me.rerere.rikkahub.ui.context.LocalToaster
 import org.koin.compose.koinInject
 import kotlin.uuid.Uuid
@@ -192,6 +195,44 @@ class ModelResponseTester internal constructor(
 fun rememberModelResponseTester(): ModelResponseTester {
     val providerManager = koinInject<ProviderManager>()
     return remember(providerManager) { ModelResponseTester(providerManager) }
+}
+
+/**
+ * 收藏切换按钮（紧凑版）。
+ *
+ * 为什么不用 `IconButton`：m3 1.5.0-alpha 的 `IconButtonImpl` 强制 `minimumInteractiveComponentSize()`
+ * → 48dp 触控盒，且 `LocalMinimumInteractiveComponentEnforcement` 已弃用、不再生效
+ * （pitfalls #24、features §7/§8 同一坑）。两个 IconButton 并排会把模型项 tail 撑宽 ~24dp，
+ * 挤压模型名区域。这里用 32dp Box + [clickable]，与 [ModelTestButton] 同规格，视觉与触控一致。
+ */
+@Composable
+fun FavoriteIconButton(
+    favorite: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(32.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (favorite) {
+            Icon(
+                imageVector = HeartIcon,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        } else {
+            Icon(
+                imageVector = HugeIcons.Favourite,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+    }
 }
 
 /**

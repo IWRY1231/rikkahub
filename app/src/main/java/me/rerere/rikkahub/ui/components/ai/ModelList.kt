@@ -75,7 +75,6 @@ import me.rerere.hugeicons.stroke.ArrowRight01
 import me.rerere.hugeicons.stroke.Brain02
 import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.DragDropHorizontal
-import me.rerere.hugeicons.stroke.Favourite
 import me.rerere.hugeicons.stroke.Image03
 import me.rerere.hugeicons.stroke.Search01
 import me.rerere.hugeicons.stroke.Text
@@ -88,7 +87,6 @@ import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.ui.components.ui.AutoAIIcon
 import me.rerere.rikkahub.ui.components.ui.Tag
 import me.rerere.rikkahub.ui.components.ui.TagType
-import me.rerere.rikkahub.ui.components.ui.icons.HeartIcon
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.theme.extendColors
 import me.rerere.rikkahub.utils.toDp
@@ -544,29 +542,30 @@ private fun ColumnScope.ModelList(
                                 onDismiss()
                             },
                             tail = {
-                                IconButton(
-                                    onClick = {
-                                        coroutineScope.launch {
-                                            settingsStore.update { settings ->
-                                                settings.copy(
-                                                    favoriteModels = settings.favoriteModels.filter { it != model.id }
-                                                )
-                                            }
-                                        }
-                                    }
+                                // 内层 Row(spacedBy(4.dp)): 摆脱 ModelItem 外层 Row 的 12dp 间距,
+                                // 使收藏与测试按钮紧邻
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
-                                    Icon(
-                                        HeartIcon,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp),
-                                        tint = MaterialTheme.colorScheme.primary,
+                                    FavoriteIconButton(
+                                        favorite = true,
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                settingsStore.update { settings ->
+                                                    settings.copy(
+                                                        favoriteModels = settings.favoriteModels.filter { it != model.id }
+                                                    )
+                                                }
+                                            }
+                                        },
+                                    )
+                                    ModelTestButton(
+                                        model = model,
+                                        providerSetting = provider,
+                                        tester = modelTester,
                                     )
                                 }
-                                ModelTestButton(
-                                    model = model,
-                                    providerSetting = provider,
-                                    tester = modelTester,
-                                )
                             },
                             dragHandle = {
                                 Icon(
@@ -627,44 +626,35 @@ private fun ColumnScope.ModelList(
                         onDismiss()
                     },
                     tail = {
-                        IconButton(
-                            onClick = {
-                                coroutineScope.launch {
-                                    settingsStore.update { settings ->
-                                        if (favorite) {
-                                            settings.copy(
-                                                favoriteModels = settings.favoriteModels.filter { it != model.id }
-                                            )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            FavoriteIconButton(
+                                favorite = favorite,
+                                onClick = {
+                                    coroutineScope.launch {
+                                        settingsStore.update { settings ->
+                                            if (favorite) {
+                                                settings.copy(
+                                                    favoriteModels = settings.favoriteModels.filter { it != model.id }
+                                                )
 
-                                        } else {
-                                            settings.copy(
-                                                favoriteModels = settings.favoriteModels + model.id
-                                            )
+                                            } else {
+                                                settings.copy(
+                                                    favoriteModels = settings.favoriteModels + model.id
+                                                )
+                                            }
                                         }
                                     }
-                                }
-                            }
-                        ) {
-                            if (favorite) {
-                                Icon(
-                                    HeartIcon,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp),
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = HugeIcons.Favourite,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
+                                },
+                            )
+                            ModelTestButton(
+                                model = model,
+                                providerSetting = providerSetting,
+                                tester = modelTester,
+                            )
                         }
-                        ModelTestButton(
-                            model = model,
-                            providerSetting = providerSetting,
-                            tester = modelTester,
-                        )
                     }
                 )
             }
