@@ -37,7 +37,7 @@ private const val MAX_DOCUMENT_CHARS = 200_000
 private val DOCUMENT_EXTENSIONS = setOf("pdf", "docx", "pptx", "epub")
 
 // 默认审批策略(用户 2026-09-13 决定): 只有 shell 默认需审批;
-// 读/列目录/写/编辑/删除/移动全部默认免审批(白名单外路径仍强制审批, 见 WRITABLE_ROOT_PREFIXES)。
+// 读/列目录/写/编辑/删除/移动全部默认免审批(白名单外路径仍强制审批)。
 // 每个工作区可在详情页「工具审批」里逐个覆盖(覆盖值优先于此处默认)。
 val WorkspaceToolDefaultApprovals: Map<String, Boolean> = mapOf(
     "workspace_read_file" to false,
@@ -81,19 +81,6 @@ private val IMAGE_EXTENSIONS = setOf(
 private fun String.isImagePath(): Boolean =
     substringAfterLast('.', "").lowercase() in IMAGE_EXTENSIONS
 
-/**
- * 工具描述里的 /sdcard 说明: 按「所有文件访问」的实际状态陈述。
- *
- * 未授权时若仍写 "mounted at /sdcard", 模型会以为手机存储可用, 从而把工具返回的空结果
- * 解释成"手机里没有这些文件"; 必须与提示词(WorkspaceReminderTransformer)口径一致。
- */
-private fun sdcardNote(workspaceRepository: WorkspaceRepository): String =
-    if (workspaceRepository.allFilesAccessGranted()) {
-        "Phone storage is mounted at /sdcard (access may be limited to a user-configured subfolder)."
-    } else {
-        "Phone storage (/sdcard) is NOT available: the 「All files access」 permission is not granted \u2014 do not attempt to read or write /sdcard."
-    }
-
 private fun createReadFileTool(
     workspaceId: String,
     needsApproval: (String) -> Boolean,
@@ -106,7 +93,7 @@ private fun createReadFileTool(
         Supports UTF-8 text files and image files (png, jpg, jpeg, gif, webp, bmp, svg, heic, heif, avif, ico).
         For large text files pass offset/limit to read a byte range instead of the whole file.
         PDF/DOCX/PPTX/EPUB files are parsed to text automatically.
-    """.trimIndent().replace("\n", " ") + " " + sdcardNote(workspaceRepository),
+    """.trimIndent().replace("\n", " "),
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
@@ -183,7 +170,7 @@ private fun createWriteFileTool(
         Write a file using the assistant's bound workspace Rootfs. Paths must be absolute inside Rootfs.
         Use /workspace for the workspace files area.
         Content is UTF-8 text by default; pass encoding="base64" to write binary data (e.g. images, archives, fonts).
-    """.trimIndent().replace("\n", " ") + " " + sdcardNote(workspaceRepository),
+    """.trimIndent().replace("\n", " "),
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
@@ -242,7 +229,7 @@ private fun createEditFileTool(
         Use /workspace for the workspace files area.
         Provide old_text and new_text. By default old_text must occur exactly once; set replace_all=true to replace every occurrence.
         If no exact match is found, whitespace-tolerant line matching is attempted automatically.
-    """.trimIndent().replace("\n", " ") + " " + sdcardNote(workspaceRepository),
+    """.trimIndent().replace("\n", " "),
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
@@ -307,7 +294,7 @@ private fun createListFilesTool(
         List a directory inside the assistant's bound workspace Rootfs. Paths must be absolute inside Rootfs.
         Use /workspace for the workspace files area.
         Returns each entry's path, type (file/directory), size and modified time.
-    """.trimIndent().replace("\n", " ") + " " + sdcardNote(workspaceRepository),
+    """.trimIndent().replace("\n", " "),
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
@@ -434,7 +421,6 @@ private fun createShellTool(
     name = "workspace_shell",
     description = buildString {
         append("Run a shell command in the assistant's bound workspace Rootfs. The workspace files area is mounted at /workspace. ")
-        append(sdcardNote(workspaceRepository)).append(' ')
         append("Use cwd for a path relative to the workspace files root. ")
         if (!defaultCwd.isNullOrBlank()) {
             append("Defaults to '$defaultCwd'. ")
@@ -584,8 +570,8 @@ private fun kotlinx.serialization.json.JsonObject.absolutePath(name: String): St
     return path
 }
 
-// 免强制审批的可写安全区: 工作区文件目录、临时目录 /tmp、技能目录, 以及已授权本地访问后的手机存储 /sdcard
-private val WRITABLE_ROOT_PREFIXES = listOf("/workspace", "/tmp", "/sdcard", "/skills")
+// 免强制审批的可写安全区: 工作区文件目录、临时目录和技能目录
+private val WRITABLE_ROOT_PREFIXES = listOf("/workspace", "/tmp", "/skills")
 
 private fun kotlinx.serialization.json.JsonElement.pathOutsideWritableRoots(name: String): Boolean =
     runCatching {

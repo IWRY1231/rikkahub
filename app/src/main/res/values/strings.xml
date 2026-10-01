@@ -1208,16 +1208,6 @@
   <string name="workspace_detail_shell_status">Shell Status</string>
   <string name="workspace_detail_android_local_access">Workspace–local storage interop</string>
   <string name="workspace_detail_android_local_access_desc">Allow the workspace shell to read and write Android local directories. When off, the workspace is isolated from the Android filesystem</string>
-  <string name="workspace_detail_all_files_access">All files access</string>
-  <string name="workspace_detail_all_files_access_desc">Let the Linux workspace read and write all files on your phone via /sdcard (DCIM, Download, Documents, etc.)</string>
-  <string name="workspace_detail_all_files_access_grant">Grant</string>
-  <string name="workspace_detail_all_files_access_granted">Granted</string>
-  <string name="workspace_detail_all_files_access_restart">Please restart the app after granting</string>
-  <string name="workspace_detail_sdcard_subpath">Mount subdirectory</string>
-  <string name="workspace_detail_sdcard_subpath_default">/sdcard (entire phone storage)</string>
-  <string name="workspace_detail_sdcard_subpath_pick">Pick folder</string>
-  <string name="workspace_detail_sdcard_subpath_reset">Reset</string>
-  <string name="workspace_detail_sdcard_subpath_unsupported">Only folders on the phone\'s internal storage are supported</string>
   <string name="workspace_detail_loading">Loading</string>
   <string name="workspace_detail_enable_shell">Enable Shell</string>
   <string name="workspace_detail_enable_shell_desc">Allow this workspace to run a terminal environment using local Rootfs</string>

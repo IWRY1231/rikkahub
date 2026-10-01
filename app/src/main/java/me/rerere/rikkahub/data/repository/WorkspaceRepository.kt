@@ -1,7 +1,5 @@
 package me.rerere.rikkahub.data.repository
 
-import android.content.Context
-import android.net.Uri
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -12,26 +10,21 @@ import kotlinx.coroutines.withContext
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.db.dao.WorkspaceDAO
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
-import me.rerere.rikkahub.data.files.WorkspaceMounts
 import me.rerere.rikkahub.utils.JsonInstant
 import me.rerere.workspace.RootfsInstallProgress
 import me.rerere.workspace.RootfsTextSlice
 import me.rerere.workspace.RootfsInstaller
-import me.rerere.workspace.WorkspaceBindMount
 import me.rerere.workspace.WorkspaceCommandResult
 import me.rerere.workspace.WorkspaceFileEntry
 import me.rerere.workspace.WorkspaceManager
 import me.rerere.workspace.WorkspaceShellStatus
 import me.rerere.workspace.WorkspaceStorageArea
-import me.rerere.workspace.commandReferencesSdcardPath
 import java.io.ByteArrayOutputStream
-import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import kotlin.uuid.Uuid
 
 class WorkspaceRepository(
-    private val context: Context,
     private val dao: WorkspaceDAO,
     private val manager: WorkspaceManager,
     private val rootfsInstaller: RootfsInstaller,
@@ -63,9 +56,6 @@ class WorkspaceRepository(
     }
 
     suspend fun getById(id: String): WorkspaceEntity? = dao.getById(id)
-
-    /** 按工作区 root 名查询（终端会话等只有 root 的场景使用） */
-    suspend fun getByRoot(root: String): WorkspaceEntity? = dao.getByRoot(root)
 
     suspend fun create(name: String): WorkspaceEntity {
         val id = Uuid.random().toString()
@@ -121,17 +111,6 @@ class WorkspaceRepository(
                 updatedAt = System.currentTimeMillis(),
             )
         )
-        return true
-    }
-
-    /** 设置工作区的 /sdcard 挂载子目录（直连模式）。传 null/空白 = 挂载整个 /sdcard。 */
-    suspend fun setSdcardSubPath(id: String, subPath: String?): Boolean {
-        val workspace = dao.getById(id) ?: return false
-        val cleaned = subPath?.trim()?.trim('/')
-            ?.split('/')?.filter { it.isNotBlank() && it != "." && it != ".." }
-            ?.joinToString("/")
-            ?.takeIf { it.isNotEmpty() }
-        dao.updateSdcardSubPath(id, cleaned, System.currentTimeMillis())
         return true
     }
 
@@ -264,47 +243,17 @@ class WorkspaceRepository(
         manager.exportFile(workspace.root, path, area, outputStream)
     }
 
-    /**
-     * 工作区的 /sdcard 直连挂载（按子目录配置; 未配置 = 挂载整盘）。
-     * 注 ①: 原「本地互通」总开关已停用（恒开启），故此处不再有开关判定;
-     * 注 ②: 未授予「所有文件访问」权限时**整体撤下挂载** —— 否则容器里会留下一个"看得见但读不出"的
-     *        空目录(绑定能建立, readdir 被 FUSE 拒绝), 工具与模型会误判成"目录本来就是空的"。
-     */
-    private fun sdcardBind(workspace: WorkspaceEntity): WorkspaceBindMount? =
-        if (allFilesAccessGranted()) WorkspaceMounts.sdcardMount(workspace.sdcardSubPath) else null
-
-    /** 「所有文件访问」是否已授予（/sdcard 可用性的单一事实源; 提示词与终端也用它） */
-    fun allFilesAccessGranted(): Boolean = WorkspaceMounts.allFilesAccessGranted(context)
-
-    /**
-     * 未授予「所有文件访问」时, 任何 /sdcard 路径在入口处显式报错。
-     *
-     * 这是"响亮失败"而不是额外限制: 权限被收回后 proot 绑定仍可能建立, 但 readdir 会被 FUSE 拒绝,
-     * 表现为**空目录**(不报错) —— 模型会据此得出"手机里没有这些文件"的错误结论。宁可直接报错。
-     * 注: 仅做 `/sdcard` 前缀判定（前缀 + '/' 边界）—— 不会误伤 /usr/share/sdcard-doc 之类;
-     *     与"挂载子目录范围"判定无关（后者在 WorkspaceManager.resolveRootfsPath 内）。
-     */
-    private fun requireSdcardAccess(path: String) {
-        if (path == "/sdcard" || path.startsWith("/sdcard/")) {
-            check(allFilesAccessGranted()) { WorkspaceMounts.SDCARD_PERMISSION_REQUIRED_MESSAGE }
-        }
-    }
-
-    /** 按 Rootfs 内绝对路径读取文件大小, 支持 /workspace、各挂载点与 Rootfs 内部路径 */
+    /** 按 Rootfs 内绝对路径读取文件大小, 支持 /workspace、bind mount 与 Rootfs 内部路径 */
     suspend fun rootfsFileSize(
         id: String,
         path: String,
     ): Long = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        requireSdcardAccess(path)
-        manager.rootfsFileSize(
-            workspace.root, path,
-            extraBindMounts = listOfNotNull(sdcardBind(workspace)),
-        )
+        manager.rootfsFileSize(workspace.root, path)
     }
 
-    /** 按 Rootfs 内绝对路径导出文件内容, 支持 /workspace、各挂载点与 Rootfs 内部路径 */
+    /** 按 Rootfs 内绝对路径导出文件内容, 支持 /workspace、bind mount 与 Rootfs 内部路径 */
     suspend fun exportRootfsFile(
         id: String,
         path: String,
@@ -312,16 +261,11 @@ class WorkspaceRepository(
     ) = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        requireSdcardAccess(path)
-        manager.exportRootfsFile(
-            workspace.root, path, outputStream,
-            extraBindMounts = listOfNotNull(sdcardBind(workspace)),
-        )
+        manager.exportRootfsFile(workspace.root, path, outputStream)
     }
 
     /**
-     * 按 Rootfs 内绝对路径写入 UTF-8 文本, 直接 Java IO 写入宿主机物理路径, 不经 PRoot,
-     * 因此 /sdcard 这类 FUSE 挂载点也能可靠读写。
+     * 按 Rootfs 内绝对路径写入 UTF-8 文本, 直接 Java IO 写入宿主机物理路径, 不经 PRoot。
      */
     suspend fun writeTextInRootfs(
         id: String,
@@ -331,12 +275,7 @@ class WorkspaceRepository(
     ): WorkspaceFileEntry = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        requireSdcardAccess(path)
-        val result = manager.writeRootfsText(
-            workspace.root, path, text, overwrite,
-            extraBindMounts = listOfNotNull(sdcardBind(workspace)),
-        )
-        result
+        manager.writeRootfsText(workspace.root, path, text, overwrite)
     }
 
     /** 写入二进制内容(如 base64 解码后的数据), 与 [writeTextInRootfs] 同一套路径解析 */
@@ -348,12 +287,7 @@ class WorkspaceRepository(
     ): WorkspaceFileEntry = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        requireSdcardAccess(path)
-        val result = manager.writeRootfsBytes(
-            workspace.root, path, bytes, overwrite,
-            extraBindMounts = listOfNotNull(sdcardBind(workspace)),
-        )
-        result
+        manager.writeRootfsBytes(workspace.root, path, bytes, overwrite)
     }
 
     /** 按 Rootfs 内绝对路径列出目录 */
@@ -363,11 +297,7 @@ class WorkspaceRepository(
     ): List<WorkspaceFileEntry> = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        requireSdcardAccess(path)
-        manager.listRootfs(
-            workspace.root, path,
-            extraBindMounts = listOfNotNull(sdcardBind(workspace)),
-        )
+        manager.listRootfs(workspace.root, path)
     }
 
     /** 按 Rootfs 内绝对路径删除文件/目录 */
@@ -378,12 +308,7 @@ class WorkspaceRepository(
     ): Boolean = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        requireSdcardAccess(path)
-        val deleted = manager.deleteRootfs(
-            workspace.root, path, recursive,
-            extraBindMounts = listOfNotNull(sdcardBind(workspace)),
-        )
-        deleted
+        manager.deleteRootfs(workspace.root, path, recursive)
     }
 
     /** 按 Rootfs 内绝对路径移动/重命名 */
@@ -395,13 +320,7 @@ class WorkspaceRepository(
     ): WorkspaceFileEntry = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        requireSdcardAccess(source)
-        requireSdcardAccess(target)
-        val result = manager.moveRootfs(
-            workspace.root, source, target, overwrite,
-            extraBindMounts = listOfNotNull(sdcardBind(workspace)),
-        )
-        result
+        manager.moveRootfs(workspace.root, source, target, overwrite)
     }
 
     /** 分段读取 Rootfs 内文件(大文件按 offset/length 分片) */
@@ -413,11 +332,7 @@ class WorkspaceRepository(
     ): RootfsTextSlice = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        requireSdcardAccess(path)
-        manager.readRootfsTextRange(
-            workspace.root, path, offset, length,
-            extraBindMounts = listOfNotNull(sdcardBind(workspace)),
-        )
+        manager.readRootfsTextRange(workspace.root, path, offset, length)
     }
 
     suspend fun deleteFile(
@@ -452,21 +367,8 @@ class WorkspaceRepository(
         stdin: ByteArray? = null,
     ): WorkspaceCommandResult {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
-        // 未授予「所有文件访问」时 /sdcard 完全没有挂载: 命令若引用 /sdcard, 在执行前确定性拦截
-        // (与文件工具同一原则: 响亮报错, 不允许先写进沙盒占位目录、事后才发现"手机上什么都没有")
-        if (!allFilesAccessGranted() && commandReferencesSdcardPath(command)) {
-            return WorkspaceCommandResult(
-                exitCode = 126,
-                stdout = "",
-                stderr = WorkspaceMounts.SDCARD_PERMISSION_REQUIRED_MESSAGE + "\n",
-            )
-        }
-        val extraBindMounts = buildList {
-            // 用户配置的 /sdcard 挂载子目录（直连）
-            sdcardBind(workspace)?.let { add(it) }
-        }
         // runInterruptible 让协程取消转化为线程中断，从而打断阻塞的 Process.waitFor 并杀掉进程
-        val result = runInterruptible(Dispatchers.IO) {
+        return runInterruptible(Dispatchers.IO) {
             manager.ensureWorkspace(workspace.root)
             manager.executeCommand(
                 workspace.root,
@@ -474,11 +376,9 @@ class WorkspaceRepository(
                 cwd,
                 timeoutMillis,
                 stdin,
-                extraBindMounts = extraBindMounts,
                 shellCompatibilityMode = workspace.shellCompatibilityMode,
             )
         }
-        return result
     }
 
     suspend fun delete(id: String): Boolean {

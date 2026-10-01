@@ -15,20 +15,15 @@ import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
-import me.rerere.rikkahub.data.files.WorkspaceMounts
+import me.rerere.rikkahub.data.files.FileFolders
 import me.rerere.workspace.RootfsPatchOptions
 import me.rerere.workspace.RootfsPatcher
-import me.rerere.workspace.WorkspaceBindMount
-import me.rerere.workspace.WorkspaceManager
-import me.rerere.workspace.buildBindMountArgs
-import me.rerere.workspace.ensureSdcardPlaceholderDir
 import java.io.File
 
 internal fun createWorkspaceTerminalSession(
     context: Context,
     root: String,
     client: TerminalSessionClient,
-    sdcardSubPath: String? = null,
     shellCompatibilityMode: Boolean,
 ): TerminalSession {
     val appContext = context.applicationContext
@@ -36,6 +31,7 @@ internal fun createWorkspaceTerminalSession(
     val filesDir = File(workspaceDir, "files")
     val linuxDir = File(workspaceDir, "linux")
     val tempDir = File(workspaceDir, "tmp")
+    val skillsDir = File(appContext.filesDir, FileFolders.SKILLS).apply { mkdirs() }
     val nativeLibraryDir = File(appContext.applicationInfo.nativeLibraryDir)
     val proot = File(nativeLibraryDir, "libproot_exec.so")
     val loader = File(nativeLibraryDir, "libproot_loader.so")
@@ -50,18 +46,10 @@ internal fun createWorkspaceTerminalSession(
         WORKSPACE_DIR,
         "-b",
         "${filesDir.absolutePath}:$WORKSPACE_DIR",
+        "-b",
+        "${skillsDir.absolutePath}:$SKILLS_DIR",
     )
 
-    // 与 AI 命令执行共用同一份 Android 本地挂载表, 保证 /skills、/tool_outputs、/upload、
-    // /sdcard 在终端与工具中行为一致（本地互通恒开启, 无开关判定）
-    args += buildBindMountArgs(WorkspaceMounts.androidLocalMounts(appContext))
-    // 未授予「所有文件访问」时同样撤下 /sdcard 挂载: 留一个"看得见但读不出"的空目录
-    // 只会让人/模型误判成"手机里没东西"（原因写在 rootfs 的 MOUNT_NOTICE.txt 里）
-    if (WorkspaceMounts.allFilesAccessGranted(appContext)) {
-        WorkspaceMounts.sdcardMount(sdcardSubPath)?.let { sdcard ->
-            args += buildBindMountArgs(listOf(sdcard))
-        }
-    }
     listOf("/dev", "/proc", "/sys").forEach { path ->
         if (File(path).exists()) {
             args += "-b"
@@ -103,32 +91,20 @@ internal fun createWorkspaceTerminalSession(
     }
 }
 
-/** 终端会话启动前的 rootfs 预处理（写入 DNS + /sdcard 占位目录告示） */
+/** 终端会话启动前的 rootfs 预处理（写入 DNS） */
 internal suspend fun prepareWorkspaceTerminalSession(
     context: Context,
     root: String,
-    sdcardSubPath: String? = null,
 ) {
     val appContext = context.applicationContext
     val workspaceDir = File(File(appContext.filesDir, "workspaces"), root)
     val linuxDir = File(workspaceDir, "linux")
     File(workspaceDir, "files").mkdirs()
     File(workspaceDir, "tmp").mkdirs()
-    WorkspaceMounts.androidLocalMounts(appContext)
+    File(appContext.filesDir, FileFolders.SKILLS).mkdirs()
     RootfsPatcher().patch(
         linuxDir,
         RootfsPatchOptions(nameservers = appContext.activeDnsServers())
-    )
-    // /sdcard 占位目录告示(交互式终端为软提示; AI 命令走硬拦截包装器):
-    // 部分挂载写"仅子目录可用"; 权限未授予写明确原因 —— 避免"看到空目录却不知为何"
-    ensureSdcardPlaceholderDir(
-        linuxDir,
-        partialSdcardMount = !sdcardSubPath.isNullOrBlank(),
-        unavailableReason = if (WorkspaceMounts.allFilesAccessGranted(appContext)) {
-            null
-        } else {
-            WorkspaceMounts.SDCARD_PERMISSION_REQUIRED_MESSAGE
-        },
     )
 }
 
@@ -350,8 +326,8 @@ internal class WorkspaceTerminalViewClient(
     }
 }
 
-private const val TAG = "WorkspaceTerminalSession"
 private const val WORKSPACE_DIR = "/workspace"
+private const val SKILLS_DIR = "/skills"
 
 // 一个 URL 最多还原跨越的软换行行数(向上/向下各算), 足够覆盖任意真实 URL
 private const val URL_MAX_WRAP_ROWS = 50

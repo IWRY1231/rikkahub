@@ -20,11 +20,6 @@ data class WorkspaceShellContext(
     val timeoutMillis: Long,
     val stdin: ByteArray? = null,
     val bindMounts: List<WorkspaceBindMount> = emptyList(),
-    /** 追加在默认挂载表之后的临时挂载(如按需挂载的 /local 镜像) */
-    val extraBindMounts: List<WorkspaceBindMount> = emptyList(),
-    /** /sdcard 部分挂载的目标(如 /sdcard/Download/Agent); null = 未启用或整盘 */
-    val sdcardMountTarget: String? = null,
-    /** Shell 兼容模式(上游 2.5.1): proot 启动时设置 PROOT_NO_SECCOMP=1 */
     val shellCompatibilityMode: Boolean = false,
 )
 

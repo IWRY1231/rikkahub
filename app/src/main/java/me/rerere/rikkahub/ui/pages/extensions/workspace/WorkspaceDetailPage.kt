@@ -101,8 +101,6 @@ import me.rerere.rikkahub.ui.components.ui.RikkaConfirmDialog
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.utils.fileSizeToString
-import me.rerere.rikkahub.utils.hasAllFilesAccessPermission
-import me.rerere.rikkahub.utils.openAllFilesAccessSettings
 import me.rerere.rikkahub.utils.plus
 import me.rerere.workspace.RootfsInstallProgress
 import me.rerere.workspace.RootfsInstallStage
@@ -221,7 +219,6 @@ fun WorkspaceDetailPage(id: String) {
                     installProgress = installProgress,
                     onInstallRootfs = { showInstallDialog = true },
                     onToolApprovalChange = vm::setToolApproval,
-                    onSdcardSubPathChange = vm::setSdcardSubPath,
                     onShellCompatibilityModeChange = vm::setShellCompatibilityMode,
                 )
 
@@ -380,22 +377,8 @@ private fun WorkspaceBasicPage(
     installProgress: RootfsInstallProgress?,
     onInstallRootfs: () -> Unit,
     onToolApprovalChange: (String, Boolean) -> Unit,
-    onSdcardSubPathChange: (String?) -> Unit,
     onShellCompatibilityModeChange: (Boolean) -> Unit,
 ) {
-    val context = LocalContext.current
-    // 手机全部文件访问权限状态, 从系统设置返回后(ON_RESUME)自动刷新
-    var allFilesGranted by remember { mutableStateOf(context.hasAllFilesAccessPermission()) }
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                allFilesGranted = context.hasAllFilesAccessPermission()
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
     val shellStatus = workspace?.shellStatus
     val installing = installProgress != null || shellStatus == WorkspaceShellStatus.INSTALLING.name
     val rootfsReady = shellStatus == WorkspaceShellStatus.READY.name
@@ -403,38 +386,6 @@ private fun WorkspaceBasicPage(
         installing -> stringResource(R.string.workspace_detail_installing)
         rootfsReady -> stringResource(R.string.workspace_detail_reinstall_rootfs)
         else -> stringResource(R.string.workspace_detail_install_rootfs)
-    }
-
-    // /sdcard 挂载子目录显示值与选择器: 从 tree Uri 提取相对路径 primary:Download -> Download;
-    // 选择内置存储根目录(primary:) = 重置为挂载整个 /sdcard
-    val sdcardSubPathDisplay = if (workspace?.sdcardSubPath.isNullOrBlank()) {
-        stringResource(R.string.workspace_detail_sdcard_subpath_default)
-    } else {
-        "/sdcard/${workspace?.sdcardSubPath}"
-    }
-    val sdcardDirPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        val docId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull()
-        if (docId == null || !docId.startsWith("primary:")) {
-            Toast.makeText(
-                context,
-                context.getString(R.string.workspace_detail_sdcard_subpath_unsupported),
-                Toast.LENGTH_SHORT,
-            ).show()
-            return@rememberLauncherForActivityResult
-        }
-        val relative = docId.removePrefix("primary:").trim('/')
-        onSdcardSubPathChange(relative.ifBlank { null })
-    }
-    val sdcardTreeInitialUri = remember(workspace?.sdcardSubPath) {
-        runCatching {
-            DocumentsContract.buildDocumentUri(
-                "com.android.externalstorage.documents",
-                "primary:${workspace?.sdcardSubPath.orEmpty().trim('/')}",
-            )
-        }.getOrNull()
     }
 
     // 工作区基础设置列表
@@ -456,95 +407,6 @@ private fun WorkspaceBasicPage(
                 item(
                     headlineContent = { Text(stringResource(R.string.workspace_detail_shell_status)) },
                     supportingContent = { Text(shellStatus?.toShellStatusLabel() ?: "-") },
-                )
-
-                // 手机全部文件访问权限引导: 授权后 Linux 工作区 AI 可通过 /sdcard 读写手机全部文件
-                item(
-                    headlineContent = {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                text = stringResource(R.string.workspace_detail_all_files_access),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            Text(
-                                text = stringResource(R.string.workspace_detail_all_files_access_desc),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            if (!allFilesGranted) {
-                                Text(
-                                    text = stringResource(R.string.workspace_detail_all_files_access_restart),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error,
-                                )
-                            }
-                        }
-                    },
-                    trailingContent = {
-                        TextButton(
-                            onClick = {
-                                context.openAllFilesAccessSettings()
-                            },
-                        ) {
-                            Text(
-                                text = stringResource(
-                                    if (allFilesGranted) {
-                                        R.string.workspace_detail_all_files_access_granted
-                                    } else {
-                                        R.string.workspace_detail_all_files_access_grant
-                                    }
-                                )
-                            )
-                        }
-                    },
-                )
-
-                // /sdcard 挂载子目录(直连模式): 通过系统目录选择器选择, 默认挂载整盘
-                item(
-                    headlineContent = {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                text = stringResource(R.string.workspace_detail_sdcard_subpath),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            Text(
-                                text = sdcardSubPathDisplay,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    },
-                    trailingContent = {
-                        CompositionLocalProvider(LocalMinimumInteractiveComponentEnforcement provides false) {
-                            Column(
-                                horizontalAlignment = Alignment.End,
-                                verticalArrangement = Arrangement.spacedBy(2.dp),
-                            ) {
-                                TextButton(
-                                    onClick = { sdcardDirPicker.launch(sdcardTreeInitialUri) },
-                                    modifier = Modifier.height(28.dp),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                                ) {
-                                    Text(
-                                        stringResource(R.string.workspace_detail_sdcard_subpath_pick),
-                                        style = MaterialTheme.typography.labelMedium,
-                                    )
-                                }
-                                if (!workspace?.sdcardSubPath.isNullOrBlank()) {
-                                    TextButton(
-                                        onClick = { onSdcardSubPathChange(null) },
-                                        modifier = Modifier.height(28.dp),
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                                    ) {
-                                        Text(
-                                            stringResource(R.string.workspace_detail_sdcard_subpath_reset),
-                                            style = MaterialTheme.typography.labelMedium,
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    },
                 )
             }
         }
