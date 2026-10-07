@@ -31,7 +31,7 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Connect
 import me.rerere.hugeicons.stroke.Favourite
 import me.rerere.rikkahub.R
-import me.rerere.rikkahub.ui.components.ui.icons.HeartIcon
+import me.rerere.ui.icons.HeartIcon
 import me.rerere.rikkahub.ui.context.LocalToaster
 import org.koin.compose.koinInject
 import kotlin.uuid.Uuid

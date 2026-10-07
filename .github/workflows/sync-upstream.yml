@@ -81,7 +81,9 @@ jobs:
             const marker = '<!-- sync-upstream-conflict -->';
             const title = '上游同步冲突：需要手动合并 rikkahub/master';
             const body = `${marker}
-            自动同步时 \`git merge upstream/master\` 产生冲突，本分支的「工作区本地互通」功能补丁需要手动解决冲突。
+            自动同步时 \`git merge upstream/master\` 产生冲突，本 fork 的本地改动需要手动解决。
+
+            **数据库相关改动务必优先处理**：本 fork 使用手写迁移链（当前版本号 28），不要直接采纳上游的 `AutoMigration` 与 `app/schemas/.../26.json、27.json`；详见 docs/PORT.md。
 
             ## 本地处理步骤
 
@@ -95,16 +97,17 @@ jobs:
             git commit && git push
             \`\`\`
 
-            ## 本功能最可能冲突的文件（解决冲突时参考 docs/PORT.md）
+            ## 本 fork 最可能冲突的文件（解决冲突时参考 docs/PORT.md）
 
-            - app/src/main/AndroidManifest.xml （权限声明附近）
-            - app/.../di/RepositoryModule.kt （WorkspaceManager 的 bindMounts）
-            - app/.../di/DataSourceModule.kt （addMigrations 列表）
-            - app/.../data/db/AppDatabase.kt （数据库版本号）
-            - workspace/.../WorkspaceManager.kt （resolveRootfsPath/executeCommand 签名）
-            - app/.../data/ai/tools/WorkspaceTools.kt （工具描述与 WRITABLE_ROOT_PREFIXES）
-            - app/.../data/ai/transformers/WorkspaceReminderTransformer.kt
-            - app/.../ui/pages/extensions/workspace/WorkspaceDetailPage.kt
+            - app/src/main/java/.../data/db/AppDatabase.kt （实体列表与 version：本 fork 手写迁移，需按 PORT.md 追加版本号+1 的迁移）
+            - app/src/main/java/.../data/db/AppDatabaseFactory.kt （addMigrations 列表）
+            - app/schemas/me.rerere.rikkahub.data.db.AppDatabase/ （**不要**直接采纳上游的 schema json）
+            - app/build.gradle.kts （applicationId = "me.iwry.rikkahub" 必须保留）
+            - app/src/main/java/.../ui/pages/chat/ChatDrawer.kt （抽屉底部动作区的本地布局）
+            - app/src/main/java/.../data/ai/GenerationLoop.kt （工具输出收缩的本地实现）
+            - app/src/main/java/.../data/ai/transformers/WorkspaceReminderTransformer.kt
+            - app/src/main/java/.../ui/components/richtext/MarkdownNew.kt
+            - ui/ 与 app/ 之间移动的通用组件（上游 `refactor(ui)` 类提交会大批改名）
 
             ## 上游本次变更的文件
 
