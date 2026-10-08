@@ -85,7 +85,7 @@ fun SettingSearchDetailPage(
         options = updated
         val newServices = settings.searchServices.toMutableList()
         newServices[serviceIndex] = updated
-        vm.updateSettings(settings.copy(searchServices = newServices))
+        vm.updateSettings { it.copy(searchServices = newServices) }
     }
 
     Scaffold(
@@ -103,7 +103,7 @@ fun SettingSearchDetailPage(
                             onClick = {
                                 val newServices = settings.searchServices.toMutableList()
                                 newServices.removeAt(serviceIndex)
-                                vm.updateSettings(settings.copy(searchServices = newServices))
+                                vm.updateSettings { it.copy(searchServices = newServices) }
                                 nav.popBackStack()
                             }
                         ) {

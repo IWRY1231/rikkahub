@@ -5,6 +5,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.http.HttpHeaders
 import io.pebbletemplates.pebble.PebbleEngine
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import me.rerere.ai.provider.ProviderManager
 import me.rerere.common.http.AcceptLanguageBuilder
@@ -24,6 +25,7 @@ import me.rerere.rikkahub.data.files.RemoteFileStore
 import me.rerere.rikkahub.data.sync.BackupManager
 import me.rerere.rikkahub.data.db.AppDatabaseFactory
 import me.rerere.rikkahub.data.db.AppDatabase
+import me.rerere.rikkahub.data.db.dao.getUsedModelIds
 import me.rerere.rikkahub.data.db.fts.MessageFtsManager
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.network.SettingsProxySelector
@@ -44,7 +46,12 @@ import java.util.concurrent.atomic.AtomicReference
 
 val dataSourceModule = module {
     single {
-        SettingsStore(context = get(), scope = get())
+        SettingsStore(
+            context = get(),
+            scope = get(),
+            // 延迟取数据库：本对象创建时 AppDatabase 还拿不到，首次归档（删除模型后）才真正调用
+            usedModelIds = { get<AppDatabase>().messageNodeDao().getUsedModelIds() },
+        )
     }
 
     single {
@@ -57,11 +64,17 @@ val dataSourceModule = module {
     }
 
     single {
-        PebbleEngine.Builder()
+        val engine = PebbleEngine.Builder()
             .loader(get<AssistantTemplateLoader>())
             .defaultLocale(Locale.getDefault())
             .autoEscaping(false)
             .build()
+        // 消息模板按助手 ID 缓存，内容取自设置，设置变了就让已编译的模板失效
+        val settingsStore = get<SettingsStore>()
+        get<AppScope>().launch {
+            settingsStore.settingsFlow.collect { engine.templateCache.invalidateAll() }
+        }
+        engine
     }
 
     single { TemplateTransformer(engine = get(), settingsStore = get()) }
